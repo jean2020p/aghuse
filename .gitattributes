@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
+*.md text eol=lf
+SHA256SUMS text eol=lf
+*.txt text eol=lf
+*.parte-* binary
+*.deb binary
+*.gz binary
+*.zip binary
+*.ear binary
+*.dmp binary
+Packages binary
