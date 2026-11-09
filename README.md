@@ -14,6 +14,7 @@ O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre (HCPA) e man
 > - É uma iniciativa independente. **Não é uma distribuição oficial** do AGHUse e não tem vínculo com a Comunidade AGHUse, o Hospital de Clínicas de Porto Alegre ou a EBSERH.
 > - O suporte técnico ao AGHUse é prestado pela Comunidade AGHUse **somente às instituições integrantes da comunidade**. Fora dela, o acesso se limita aos arquivos e às instruções de instalação.
 > - Quem instala, configura e opera o sistema assume toda a responsabilidade por seu uso, pela segurança das informações e pelo cumprimento da legislação aplicável, inclusive a LGPD.
+> - **Use uma máquina dedicada e recém-instalada**, física ou virtual, com Linux e sem outros sistemas em funcionamento. **Não execute o instalador em servidores que já estão em produção ou que hospedam outros sistemas.** Ele instala e reconfigura pacotes e serviços (PostgreSQL, OpenLDAP, Java, serviços systemd) e altera permissões de banco de dados, o que pode afetar aplicações existentes. A execução em máquinas compartilhadas é feita **por conta e risco** de quem a realiza.
 > - O uso com dados reais de pacientes exige a validação descrita em [Uso em produção](#uso-em-produção).
 
 ---
@@ -53,6 +54,7 @@ A aplicação `aghu.ear` deste pacote foi compilada a partir do código-fonte co
 - O WildFly reserva 5 GB de memória para a aplicação; o mínimo aceito é 4 GB, e com menos o sistema não inicializa. O PostgreSQL e o sistema operacional precisam do restante. Com menos de 12 GB de RAM, o instalador usa 4 GB; com menos de 8 GB, a instalação é recusada.
 - O espaço em disco recomendado considera o crescimento do banco, os logs, os índices de busca e os backups locais.
 - **Sistemas suportados:** Ubuntu Server 22.04 LTS (instalação completa sem internet). Ubuntu 24.04 LTS e Debian 12 também são aceitos, mas o PostgreSQL e o OpenLDAP são baixados dos repositórios oficiais.
+- **Máquina dedicada:** servidor ou máquina virtual com Linux recém-instalado, reservado só para o AGHUse. Não use servidores com outros sistemas em funcionamento (veja o [Aviso importante](#aviso-importante)). Uma máquina virtual permite descartar o ambiente e repetir a instalação com facilidade.
 - **Acesso:** usuário com permissão de administrador (`sudo`).
 - **Navegador:** versões atuais do Google Chrome, Mozilla Firefox ou Microsoft Edge.
 - **Internet:** não é necessária no Ubuntu 22.04. Todos os componentes estão na pasta `dependencias/`. Em outras versões do sistema, o PostgreSQL e o OpenLDAP são baixados dos repositórios oficiais.

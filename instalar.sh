@@ -138,6 +138,31 @@ LIVRE_GB=$(df -Pk "$PREFIXO" | awk 'NR==2{print int($4/1048576)}')
 [ "$LIVRE_GB" -ge 15 ] || erro "espaco livre insuficiente em $PREFIXO: ${LIVRE_GB} GB (minimo 15 GB; recomendado 100 GB)."
 [ "$LIVRE_GB" -ge 40 ] || aviso "espaco livre de ${LIVRE_GB} GB; recomendado 100 GB para dados, logs e backups."
 
+# Sinais de que a maquina nao e dedicada (apenas aviso)
+OUTROS=()
+PH=$((8080 + PORT_OFFSET)); PM=$((9990 + PORT_OFFSET))
+for porta in "$PH" "$PM"; do
+  if ss -Hltn "sport = :$porta" 2>/dev/null | grep -q .; then
+    systemctl is-active -q "$SERVICO" 2>/dev/null || OUTROS+=("porta $porta ja esta em uso por outro programa")
+  fi
+done
+if command -v pg_lsclusters >/dev/null 2>&1; then
+  while read -r v c _; do
+    [ "$v" = "$PG_VERSAO" ] || OUTROS+=("PostgreSQL $v ($c) ja instalado")
+  done < <(pg_lsclusters -h 2>/dev/null)
+fi
+for s in apache2 nginx mysql mariadb docker tomcat9 wildfly jboss; do
+  systemctl is-active -q "$s" 2>/dev/null && OUTROS+=("servico '$s' em execucao")
+done
+if [ "${#OUTROS[@]}" -gt 0 ]; then
+  aviso "esta maquina parece hospedar outros sistemas:"
+  for o in "${OUTROS[@]}"; do echo "${C_AMAR}      - $o${C_FIM}"; done
+  aviso "o instalador foi feito para uma maquina DEDICADA e recem-instalada. Em maquinas"
+  aviso "com outros sistemas a execucao e por sua conta e risco (veja 'Aviso importante' no README.md)."
+  aviso "Para cancelar, pressione Ctrl+C nos proximos 15 segundos."
+  sleep 15
+fi
+
 etapa "Conferindo integridade do pacote"
 # arquivos grandes podem vir divididos em partes (<nome>.parte-001, -002 ...): reconstroi
 while IFS= read -r p1; do
