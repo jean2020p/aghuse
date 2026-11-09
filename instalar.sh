@@ -90,10 +90,14 @@ etapa "Verificando parametros e requisitos"
 case "$AMBIENTE" in teste|producao) ;; *) erro "AMBIENTE deve ser 'teste' ou 'producao'." ;; esac
 case "$MODO_LOGIN" in banco|ldap-local|ldap-externo) ;; *) erro "MODO_LOGIN deve ser 'banco', 'ldap-local' ou 'ldap-externo'." ;; esac
 case "$RECRIAR_BANCO" in sim|nao) ;; *) erro "RECRIAR_BANCO deve ser 'sim' ou 'nao'." ;; esac
+PROXY_REVERSO="${PROXY_REVERSO:-nao}"
+case "$PROXY_REVERSO" in sim|nao) ;; *) erro "PROXY_REVERSO deve ser 'sim' ou 'nao'." ;; esac
 
 if [ "$AMBIENTE" = "producao" ]; then
   [ "$CONFIRMO_PRODUCAO" = "sim" ] || erro "AMBIENTE=producao exige CONFIRMO_PRODUCAO=\"sim\" (leia a secao 'Uso em producao' do README.md)."
-  [ "$MODO_LOGIN" != "ldap-local" ] || erro "MODO_LOGIN=ldap-local destina-se apenas a testes. Em producao use 'ldap-externo' ou 'banco'."
+  [ "$PROXY_REVERSO" = "sim" ] || erro "em producao o sistema deve ser publicado atras de um proxy reverso com HTTPS: use PROXY_REVERSO=\"sim\"."
+  [ "$HTTP_BIND" = "0.0.0.0" ] && aviso "HTTP_BIND=0.0.0.0: o WildFly tambem aceita conexoes diretas, sem passar pelo proxy. Prefira 127.0.0.1 ou restrinja a porta no firewall."
+  [ "$MODO_LOGIN" = "ldap-externo" ] || erro "em producao use MODO_LOGIN=ldap-externo (LDAP/Active Directory da instituicao). Os modos 'ldap-local' e 'banco' destinam-se apenas a testes."
 fi
 
 [[ "$ADMIN_LOGIN" =~ ^[A-Za-z0-9_.-]+$ ]] || erro "ADMIN_LOGIN invalido."
@@ -259,6 +263,18 @@ if [ -z "$EXISTE_DB" ]; then
 else
   info "banco $DB_NOME ja existe - dados preservados (RECRIAR_BANCO=nao)"
 fi
+# Acesso ao banco: somente os usuarios da aplicacao conectam no $DB_NOME. No modo
+# "banco", as credenciais de login sao conferidas em um banco vazio ($DB_LOGIN),
+# sem acesso aos dados.
+DB_LOGIN="aghuse_login"
+[ -n "$(psql_pg -Atc "select 1 from pg_database where datname='$DB_LOGIN'")" ] \
+  || psql_pg -c "CREATE DATABASE \"$DB_LOGIN\" WITH TEMPLATE template0 ENCODING 'UTF8' OWNER postgres"
+psql_pg <<SQL
+REVOKE ALL ON DATABASE "$DB_LOGIN" FROM PUBLIC;
+REVOKE CONNECT, TEMPORARY ON DATABASE "$DB_NOME" FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE "$DB_NOME" TO "$DB_USUARIO", "$DB_USUARIO_FIT";
+SQL
+info "acesso ao banco $DB_NOME restrito aos usuarios da aplicacao"
 psql_pg -d "$DB_NOME" -Atc "select count(*) from casca.csc_usuario where login=upper('$ADMIN_LOGIN')" | grep '^1$' >/dev/null \
   || aviso "o usuario $ADMIN_LOGIN nao foi encontrado em casca.csc_usuario."
 
@@ -275,15 +291,19 @@ case "$MODO_LOGIN" in
 DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$r') THEN CREATE ROLE "$r" LOGIN; END IF; END \$\$;
 SET password_encryption = 'scram-sha-256';
 ALTER ROLE "$r" PASSWORD '$ADMIN_SENHA';
-GRANT CONNECT ON DATABASE "$DB_NOME" TO "$r";
+REVOKE ALL ON DATABASE "$DB_NOME" FROM "$r";
+GRANT CONNECT ON DATABASE "$DB_LOGIN" TO "$r";
 SQL
     done
-    info "senha do $ADMIN_LOGIN definida no PostgreSQL (logins '$ADMIN_LOGIN' e '$ADMIN_MIN')"
+    info "modo de avaliacao: senha do $ADMIN_LOGIN conferida pelo PostgreSQL"
+    info "outras contas de acesso: sudo ./usuario.sh criar LOGIN"
     LDAP_HOST=""; LDAP_PORTA="389"; LDAP_USER_DN=""; LDAP_BASE_USUARIOS=""; LDAP_ATRIBUTO_LOGIN=""
     LDAP_FILTRO=""; LDAP_BIND_DN=""; LDAP_BIND_SENHA=""
     ;;
   ldap-local)
     BASE="dc=$(echo "$LDAP_LOCAL_DOMINIO" | sed 's/\./,dc=/g')"
+    LDAP_SENHA_ARQ="/etc/aghuse/ldap-local.senha"
+    if [ -z "$LDAP_LOCAL_ADMIN_SENHA" ] && [ -f "$LDAP_SENHA_ARQ" ]; then LDAP_LOCAL_ADMIN_SENHA="$(cat "$LDAP_SENHA_ARQ")"; fi
     apt_instalar ldap-utils
     if ! dpkg -s slapd >/dev/null 2>&1; then
       senha_param LDAP_LOCAL_ADMIN_SENHA
@@ -301,12 +321,15 @@ EOF
       systemctl restart slapd
       info "OpenLDAP instalado (base $BASE, somente 127.0.0.1)"
     else
-      [ -n "$LDAP_LOCAL_ADMIN_SENHA" ] || erro "o OpenLDAP ja esta instalado: informe LDAP_LOCAL_ADMIN_SENHA (senha de cn=admin,$BASE)."
+      [ -n "$LDAP_LOCAL_ADMIN_SENHA" ] || erro "o OpenLDAP ja esta instalado e a senha de cn=admin,$BASE nao foi encontrada em $LDAP_SENHA_ARQ: informe LDAP_LOCAL_ADMIN_SENHA no aghuse.conf."
       info "OpenLDAP ja instalado - usando a base $BASE"
     fi
     systemctl enable -q slapd 2>/dev/null || true
     ldapwhoami -x -H ldap://127.0.0.1 -D "cn=admin,$BASE" -w "$LDAP_LOCAL_ADMIN_SENHA" >/dev/null \
       || erro "nao foi possivel autenticar cn=admin,$BASE no OpenLDAP local (base ou senha incorretas)."
+    install -d -m 700 /etc/aghuse
+    ( umask 077; printf '%s
+' "$LDAP_LOCAL_ADMIN_SENHA" > "$LDAP_SENHA_ARQ" )
     if ! ldapsearch -x -LLL -H ldap://127.0.0.1 -b "ou=people,$BASE" -s base dn >/dev/null 2>&1; then
       printf 'dn: ou=people,%s\nobjectClass: organizationalUnit\nou: people\n' "$BASE" \
         | ldapadd -x -H ldap://127.0.0.1 -D "cn=admin,$BASE" -w "$LDAP_LOCAL_ADMIN_SENHA" >/dev/null
@@ -322,7 +345,7 @@ EOF
       printf 'dn: %s\nobjectClass: inetOrgPerson\nuid: %s\ncn: Administrador AGHUse\nsn: %s\nuserPassword: %s\n' \
         "$UDN" "$ADMIN_LOGIN" "$ADMIN_LOGIN" "$HASH" \
         | ldapadd -x -H ldap://127.0.0.1 -D "cn=admin,$BASE" -w "$LDAP_LOCAL_ADMIN_SENHA" >/dev/null
-      info "usuario $UDN criado"
+      info "conta $UDN criada (outras contas: sudo ./usuario.sh criar LOGIN)"
     fi
     ldapwhoami -x -H ldap://127.0.0.1 -D "$UDN" -w "$ADMIN_SENHA" >/dev/null || erro "falha no teste de login LDAP do $ADMIN_LOGIN."
     LDAP_HOST="127.0.0.1"; LDAP_PORTA="389"
@@ -380,7 +403,8 @@ export AGHUSE_MODO_LOGIN="$MODO_LOGIN" AGHUSE_NOME_AMBIENTE="$NOME_AMBIENTE" AGH
   AGHUSE_LDAP_HOST="$LDAP_HOST" AGHUSE_LDAP_PORTA="$LDAP_PORTA" AGHUSE_LDAP_USER_DN="$LDAP_USER_DN" \
   AGHUSE_LDAP_BIND_DN="$LDAP_BIND_DN" AGHUSE_LDAP_BIND_SENHA="$LDAP_BIND_SENHA" \
   AGHUSE_LDAP_BASE_USUARIOS="$LDAP_BASE_USUARIOS" AGHUSE_LDAP_ATRIBUTO_LOGIN="$LDAP_ATRIBUTO_LOGIN" \
-  AGHUSE_LDAP_FILTRO="$LDAP_FILTRO" AGHUSE_SMTP_HOST="$SMTP_HOST" AGHUSE_PORT_OFFSET="$PORT_OFFSET"
+  AGHUSE_LDAP_FILTRO="$LDAP_FILTRO" AGHUSE_SMTP_HOST="$SMTP_HOST" AGHUSE_PORT_OFFSET="$PORT_OFFSET" \
+  AGHUSE_DB_LOGIN="$DB_LOGIN" AGHUSE_PROXY_REVERSO="$PROXY_REVERSO"
 python3 "$DIR/lib/configurar_wildfly.py" "$WFD" | sed 's/^/    /'
 
 cat > "$WFD/bin/standalone.conf" <<EOF

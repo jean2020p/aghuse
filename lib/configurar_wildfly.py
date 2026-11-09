@@ -77,10 +77,17 @@ if modo == "banco":
                         <validate-on-match>true</validate-on-match>
                     </validation>
                 </datasource>
-""" % (escape(valores["DB_PORTA"]), escape(valores["DB_NOME"]))
+""" % (escape(valores["DB_PORTA"]), escape(E.get("AGHUSE_DB_LOGIN", "aghuse_login")))
     if "                <drivers>" not in x:
         sys.exit("ERRO: secao <drivers> nao encontrada no standalone-full.xml")
     x = x.replace("                <drivers>", ds + "                <drivers>", 1)
+# proxy reverso com HTTPS: o WildFly passa a usar X-Forwarded-Proto/Host/For
+# (sem isso, apos o login o navegador e redirecionado para http://)
+if E.get("AGHUSE_PROXY_REVERSO", "nao") == "sim":
+    padrao = re.compile(r'<http-listener name="default"(?![^>]*proxy-address-forwarding)')
+    if not padrao.search(x):
+        sys.exit("ERRO: http-listener 'default' nao encontrado no standalone-full.xml")
+    x = padrao.sub('<http-listener name="default" proxy-address-forwarding="true"', x, count=1)
 open(XML, "w", encoding="utf-8").write(x)
 
 # ---------- app-parameters.properties ----------
