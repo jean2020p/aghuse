@@ -231,7 +231,7 @@ O instalador aplica o atributo quando `PROXY_REVERSO="sim"`. Use também `HTTP_B
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name aghuse.instituicao.gov.br;
+    server_name aghuse.instituicao.uf.gov.br;
     ssl_certificate     /etc/ssl/certs/aghuse.crt;
     ssl_certificate_key /etc/ssl/private/aghuse.key;
 
@@ -249,7 +249,7 @@ server {
 
 server {
     listen 80;
-    server_name aghuse.instituicao.gov.br;
+    server_name aghuse.instituicao.uf.gov.br;
     return 301 https://$host$request_uri;
 }
 ```
