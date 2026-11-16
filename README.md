@@ -1,6 +1,10 @@
-# Instalador AGHUse 13.250-STABLE para Linux
+# Instalador AGHUse 13.250-STABLE para Windows e Linux
 
-Instalação automatizada do **AGHUse – Aplicativo para Gestão Hospitalar** em um servidor Linux. Com um comando, o instalador prepara Java, servidor de aplicação, banco de dados, base inicial, autenticação e serviço do sistema.
+Instalação automatizada do **AGHUse – Aplicativo para Gestão Hospitalar** no Windows ou num servidor Linux. O instalador prepara Java, servidor de aplicação, banco de dados, base inicial, autenticação e serviço do sistema, sem nada para preencher.
+
+> **Como instalar:** baixe o arquivo do seu sistema na página de **[Versões (Releases)](https://github.com/jean2020p/aghuse/releases/latest)** e siga o passo a passo:
+> - **Windows:** dois cliques no instalador. Ver [Instalação no Windows](#2-instalação-no-windows).
+> - **Linux:** quatro comandos no terminal. Ver [Instalação no Linux](#3-instalação-no-linux).
 
 O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre (HCPA) e mantido pela Comunidade AGHUse. Ele tem origem comum com o **AGHU – Aplicativo de Gestão para Hospitais Universitários**, a versão distribuída pela Ebserh aos hospitais universitários federais.
 
@@ -18,7 +22,7 @@ O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre (HCPA) e man
 > - É uma iniciativa independente. **Não é uma distribuição oficial** do AGHUse e não tem vínculo com a Comunidade AGHUse, o Hospital de Clínicas de Porto Alegre ou a EBSERH.
 > - O suporte técnico ao AGHUse é prestado pela Comunidade AGHUse **somente às instituições integrantes da comunidade**. Fora dela, o acesso se limita aos arquivos e às instruções de instalação. Para conhecer a comunidade ou integrá-la: [https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse](https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse).
 > - Quem instala, configura e opera o sistema assume toda a responsabilidade por seu uso, pela segurança das informações e pelo cumprimento da legislação aplicável, inclusive a LGPD.
-> - **Use uma máquina dedicada e recém-instalada**, física ou virtual, com Linux e sem outros sistemas em funcionamento. **Não execute o instalador em servidores que já estão em produção ou que hospedam outros sistemas.** Ele instala e reconfigura pacotes e serviços (PostgreSQL, OpenLDAP, Java, serviços systemd) e altera permissões de banco de dados, o que pode afetar aplicações existentes. A execução em máquinas compartilhadas é feita **por conta e risco** de quem a realiza.
+> - **Use uma máquina dedicada e recém-instalada**, física ou virtual, com Windows ou Linux e sem outros sistemas em funcionamento. **Não execute o instalador em servidores que já estão em produção ou que hospedam outros sistemas.** Ele instala e reconfigura pacotes e serviços (PostgreSQL, OpenLDAP, Java, serviços systemd) e altera permissões de banco de dados, o que pode afetar aplicações existentes. A execução em máquinas compartilhadas é feita **por conta e risco** de quem a realiza.
 > - O uso com dados reais de pacientes exige a validação descrita em [Uso em produção](#uso-em-produção).
 
 ---
@@ -189,7 +193,7 @@ Há **dois pacotes** para cada sistema. O instalador, o banco e a configuração
 | | **Variante "integração LDAP"** (recomendada, não oficial) | **Original** |
 |---|---|---|
 | Aplicação | AGHUse 13.250-STABLE **com um ajuste nosso**: a troca de senha | AGHUse 13.250-STABLE **exatamente** como compilado do código oficial |
-| Trocar a própria senha pela tela **Senha** do AGHUse | ✅ nos três modos de login: LDAP local (Linux), banco de dados (Windows) e AD/LDAP da instituição | ❌ dá erro (não implementado no original) |
+| Trocar a própria senha pela tela **Senha** do AGHUse | ✅ nos três modos de login: LDAP local (Linux e Windows), banco de dados e AD/LDAP da instituição | ❌ dá erro (não implementado no original) |
 | Identificação | "Variante não oficial: integração LDAP" no rodapé interno, após o login (a tela de login pública não muda) | — |
 | Quando escolher | uso e avaliação no dia a dia | comparar com a versão da comunidade ou reproduzir um defeito para relatar a ela |
 
