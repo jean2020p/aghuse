@@ -26,18 +26,18 @@ aviso() { echo "${C_AMAR}    AVISO: $*${C_FIM}"; }
 erro()  { echo "${C_VERM}ERRO: $*${C_FIM}" >&2; exit 1; }
 trap 'echo "${C_VERM}Falha na etapa: ${ETAPA_ATUAL} (linha $LINENO). Consulte o log: ${LOG:-}${C_FIM}" >&2' ERR
 
-gerar_senha() {  # 32 caracteres [A-Za-z0-9] a partir de /dev/urandom
-  local s=""
-  while [ "${#s}" -lt 32 ]; do s="$s$(head -c 96 /dev/urandom | base64 -w0 | tr -dc 'A-Za-z0-9')"; done
-  printf '%s\n' "${s:0:32}"
+gerar_senha() {  # gerar_senha [TAMANHO=32]: [A-Za-z0-9] a partir de /dev/urandom
+  local s="" n="${1:-32}"
+  while [ "${#s}" -lt "$n" ]; do s="$s$(head -c 96 /dev/urandom | base64 -w0 | tr -dc 'A-Za-z0-9')"; done
+  printf '%s\n' "${s:0:$n}"
 }
 
 declare -A GERADAS=()
-senha_param() {  # senha_param NOME_VARIAVEL
-  local nome="$1" valor="${!1}" minimo=16
-  [ "$AMBIENTE" = "producao" ] && minimo=20
+senha_param() {  # senha_param NOME_VARIAVEL [MINIMO=16] [TAMANHO_GERADA=32]
+  local nome="$1" valor="${!1}" minimo="${2:-16}"
+  [ "$AMBIENTE" = "producao" ] && [ "$minimo" -lt 20 ] && [ -z "${2:-}" ] && minimo=20
   if [ -z "$valor" ]; then
-    printf -v "$nome" '%s' "$(gerar_senha)"
+    printf -v "$nome" '%s' "$(gerar_senha "${3:-32}")"
     GERADAS[$nome]=1
   else
     [[ "$valor" =~ ^[A-Za-z0-9]+$ ]] || erro "$nome deve conter apenas letras e numeros."
@@ -83,6 +83,13 @@ echo "${C_VERDE}"
 echo "  ==================================================================="
 echo "   AGHUse $VERSAO_AGHUSE - instalador"
 echo "   Distribuido para TESTE e ESTUDO do sistema. Sem garantia e sem suporte."
+# Pacote "variante" (modificacao nao oficial do AGHUse): identificado pelo arquivo VARIANTE
+VARIANTE_DESCRICAO=""
+if [ -f "$DIR/VARIANTE" ]; then
+  VARIANTE_DESCRICAO="$(grep '^DESCRICAO=' "$DIR/VARIANTE" | head -1 | cut -d'"' -f2)"
+  echo "${C_AMAR}   ${VARIANTE_DESCRICAO:-Variante nao oficial}"
+  echo "   Documentacao: modificacoes/ no repositorio do instalador${C_VERDE}"
+fi
 echo "  ==================================================================="
 echo "${C_FIM}  $(date '+%d/%m/%Y %H:%M:%S')   log: $LOG"
 
@@ -124,43 +131,44 @@ esac
 
 RAM_GB=$(awk '/MemTotal/{print int($2/1048576+0.5)}' /proc/meminfo)
 [ "$RAM_GB" -ge 8 ] || erro "memoria insuficiente: ${RAM_GB} GB (minimo 8 GB; recomendado 16 GB)."
-if [ -z "$MEMORIA_JVM" ]; then
-  if [ "$RAM_GB" -ge 12 ]; then MEMORIA_JVM="5G"; else MEMORIA_JVM="4G"; fi
-fi
+# 5G e o minimo real: com 4G a primeira implantacao do aghu.ear termina em OutOfMemoryError
+[ -n "$MEMORIA_JVM" ] || MEMORIA_JVM="5G"
 [[ "$MEMORIA_JVM" =~ ^[0-9]+[GgMm]$ ]] || erro "MEMORIA_JVM invalida (ex.: 5G)."
 MEM_MB=${MEMORIA_JVM%[GgMm]}; [[ "$MEMORIA_JVM" =~ [Gg]$ ]] && MEM_MB=$(( MEM_MB * 1024 ))
-[ "$MEM_MB" -ge 4096 ] || erro "MEMORIA_JVM=$MEMORIA_JVM insuficiente: o AGHUse exige no minimo 4G (recomendado 5G)."
+[ "$MEM_MB" -ge 5120 ] || erro "MEMORIA_JVM=$MEMORIA_JVM insuficiente: o AGHUse exige no minimo 5G (com 4G a aplicacao nao inicializa)."
 info "memoria: ${RAM_GB} GB na maquina, ${MEMORIA_JVM} para o WildFly"
-[ "$MEM_MB" -ge 5120 ] || aviso "o AGHUse recomenda 5G para o WildFly; com ${MEMORIA_JVM} o desempenho pode ser limitado."
 
 mkdir -p "$PREFIXO"
 LIVRE_GB=$(df -Pk "$PREFIXO" | awk 'NR==2{print int($4/1048576)}')
 [ "$LIVRE_GB" -ge 15 ] || erro "espaco livre insuficiente em $PREFIXO: ${LIVRE_GB} GB (minimo 15 GB; recomendado 100 GB)."
 [ "$LIVRE_GB" -ge 40 ] || aviso "espaco livre de ${LIVRE_GB} GB; recomendado 100 GB para dados, logs e backups."
 
-# Sinais de que a maquina nao e dedicada (apenas aviso)
-OUTROS=()
+# Sinais de que a maquina nao e dedicada: exigem aceite explicito para continuar
 PH=$((8080 + PORT_OFFSET)); PM=$((9990 + PORT_OFFSET))
-for porta in "$PH" "$PM"; do
-  if ss -Hltn "sport = :$porta" 2>/dev/null | grep -q .; then
-    systemctl is-active -q "$SERVICO" 2>/dev/null || OUTROS+=("porta $porta ja esta em uso por outro programa")
-  fi
-done
-if command -v pg_lsclusters >/dev/null 2>&1; then
-  while read -r v c _; do
-    [ "$v" = "$PG_VERSAO" ] || OUTROS+=("PostgreSQL $v ($c) ja instalado")
-  done < <(pg_lsclusters -h 2>/dev/null)
-fi
-for s in apache2 nginx mysql mariadb docker tomcat9 wildfly jboss; do
-  systemctl is-active -q "$s" 2>/dev/null && OUTROS+=("servico '$s' em execucao")
-done
+# shellcheck source=lib/detectar_outros.sh
+. "$DIR/lib/detectar_outros.sh"
+detectar_outros
+
+ACEITO_RISCO="${ACEITO_RISCO:-nao}"
 if [ "${#OUTROS[@]}" -gt 0 ]; then
-  aviso "esta maquina parece hospedar outros sistemas:"
+  aviso "esta maquina NAO parece dedicada ao AGHUse. Foram encontrados:"
   for o in "${OUTROS[@]}"; do echo "${C_AMAR}      - $o${C_FIM}"; done
-  aviso "o instalador foi feito para uma maquina DEDICADA e recem-instalada. Em maquinas"
-  aviso "com outros sistemas a execucao e por sua conta e risco (veja 'Aviso importante' no README.md)."
-  aviso "Para cancelar, pressione Ctrl+C nos proximos 15 segundos."
-  sleep 15
+  aviso "Riscos de continuar: o instalador usa o PostgreSQL $PG_VERSAO existente (cria usuarios e o banco"
+  aviso "$DB_NOME nele), reserva ${MEMORIA_JVM} de memoria para o WildFly e disputa portas, memoria e disco"
+  aviso "com os outros sistemas. Em servidores de producao (por exemplo, com o e-SUS) NAO instale."
+  if [ "$ACEITO_RISCO" = "sim" ]; then
+    info "risco aceito (ACEITO_RISCO=sim)"
+  elif [ -t 0 ]; then
+    read -r -p "    Digite ACEITO para continuar por sua conta e risco (Enter cancela): " RESP
+    [ "$RESP" = "ACEITO" ] || erro "instalacao cancelada pelo usuario."
+    ACEITO_RISCO="sim (digitado no terminal)"
+  else
+    erro "outros sistemas encontrados. Para instalar mesmo assim, use ACEITO_RISCO=\"sim\" no aghuse.conf."
+  fi
+  install -d -m 700 /etc/aghuse
+  { echo "AGHUse - aceite de risco ($(date '+%d/%m/%Y %H:%M'), usuario ${SUDO_USER:-root}, $ACEITO_RISCO)"
+    printf '  - %s\n' "${OUTROS[@]}"; } >> "/etc/aghuse/aceite-risco-$SERVICO.txt"
+  chmod 600 "/etc/aghuse/aceite-risco-$SERVICO.txt"
 fi
 
 etapa "Conferindo integridade do pacote"
@@ -187,7 +195,8 @@ senha_param DB_SENHA
 senha_param DB_SENHA_FIT
 if [ "$MODO_LOGIN" != "ldap-externo" ]; then
   ADMIN_SENHA_INFORMADA="${ADMIN_SENHA}"
-  senha_param ADMIN_SENHA
+  # senha de quem entra no sistema: minimo 8 (digitavel); gerada com 12 caracteres
+  senha_param ADMIN_SENHA 8 12
 fi
 
 # ----------------------------------------------------------------------------
@@ -245,6 +254,13 @@ pg_ctlcluster "$PG_VERSAO" "$CLUSTER" start 2>/dev/null || true
 systemctl enable -q postgresql
 pg_lsclusters -h | awk -v v="$PG_VERSAO" -v c="$CLUSTER" '$1==v && $2==c && $4!="online"{exit 1}' \
   || erro "o cluster PostgreSQL $PG_VERSAO/$CLUSTER nao iniciou."
+# "online" no pg_lsclusters nao garante conexoes: logo apos o boot o servidor pode estar
+# em recuperacao ("the database system is starting up"). Espera aceitar conexoes.
+for _ in $(seq 1 150); do
+  (cd /tmp && runuser -u postgres -- pg_isready -q -p "$PG_PORTA") && break
+  sleep 2
+done
+(cd /tmp && runuser -u postgres -- pg_isready -q -p "$PG_PORTA")   || erro "o PostgreSQL $PG_VERSAO/$CLUSTER nao passou a aceitar conexoes em 5 minutos (veja /var/log/postgresql/)."
 info "cluster $PG_VERSAO/$CLUSTER ativo na porta $PG_PORTA (somente conexoes locais)"
 
 # ----------------------------------------------------------------------------
@@ -300,6 +316,38 @@ REVOKE CONNECT, TEMPORARY ON DATABASE "$DB_NOME" FROM PUBLIC;
 GRANT CONNECT, TEMPORARY ON DATABASE "$DB_NOME" TO "$DB_USUARIO", "$DB_USUARIO_FIT";
 SQL
 info "acesso ao banco $DB_NOME restrito aos usuarios da aplicacao"
+# Tela inicial em branco ("A ID de componente panel_NNN ja foi encontrada"): no primeiro login o
+# AGHUse grava os icones do usuario em casca.csc_dashboard; dois logins simultaneos gravam tudo em
+# dobro, e a restricao unica da tabela nao impede porque modal/id_favorito ficam NULL. Remove
+# duplicatas e cria um indice unico que trata NULL (defeito do AGHUse; nao altera dados validos).
+psql_pg -d "$DB_NOME" <<'SQL'
+DELETE FROM casca.csc_dashboard d USING casca.csc_dashboard o
+ WHERE d.id_usuario = o.id_usuario AND d.id_favorito IS NOT DISTINCT FROM o.id_favorito
+   AND d.modal IS NOT DISTINCT FROM o.modal AND d.id > o.id;
+CREATE UNIQUE INDEX IF NOT EXISTS csc_dsh_uk_instalador
+  ON casca.csc_dashboard (id_usuario, coalesce(modal, ''), coalesce(id_favorito, -1));
+SQL
+# Vinculo do administrador: na base inicial o AGHU e o servidor 9999999/955. "Criar Login" nesse
+# servidor (tela Usuario) passa o vinculo para o login novo e o AGHU fica sem servidor: novos logins
+# e a troca de senha falham ("Nenhum Servidor do HU encontrado associado ao usuario AGHU").
+# Reparo (devolve o vinculo) e protecao (o banco recusa passar esse servidor para outro login).
+psql_pg -d "$DB_NOME" <<'SQL'
+UPDATE agh.rap_servidores SET usuario = 'AGHU'
+ WHERE matricula = 9999999 AND vin_codigo = 955 AND upper(coalesce(usuario, '')) <> 'AGHU'
+   AND NOT EXISTS (SELECT 1 FROM agh.rap_servidores s WHERE upper(s.usuario) = 'AGHU');
+CREATE OR REPLACE FUNCTION agh.instalador_protege_servidor_admin() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  IF upper(coalesce(OLD.usuario, '')) = 'AGHU' AND upper(coalesce(NEW.usuario, '')) <> 'AGHU' THEN
+    RAISE EXCEPTION 'O servidor % (vinculo %) pertence ao administrador AGHU e nao pode receber outro login. Cadastre uma pessoa e um servidor novos para este usuario.', OLD.matricula, OLD.vin_codigo;
+  END IF;
+  RETURN NEW;
+END $f$;
+DROP TRIGGER IF EXISTS trg_instalador_protege_admin ON agh.rap_servidores;
+CREATE TRIGGER trg_instalador_protege_admin BEFORE UPDATE OF usuario ON agh.rap_servidores
+  FOR EACH ROW EXECUTE FUNCTION agh.instalador_protege_servidor_admin();
+SQL
+psql_pg -d "$DB_NOME" -Atc "select count(*) from agh.rap_servidores where upper(usuario)='AGHU'" | grep '^1$' >/dev/null \
+  || aviso "o administrador AGHU esta sem vinculo de servidor (agh.rap_servidores): o login dele pode ser recusado."
 psql_pg -d "$DB_NOME" -Atc "select count(*) from casca.csc_usuario where login=upper('$ADMIN_LOGIN')" | grep '^1$' >/dev/null \
   || aviso "o usuario $ADMIN_LOGIN nao foi encontrado em casca.csc_usuario."
 
@@ -511,6 +559,7 @@ umask 077
 {
   echo "AGHUse $VERSAO_AGHUSE - credenciais da instalacao ($(date '+%d/%m/%Y %H:%M'))"
   echo "Ambiente: $AMBIENTE   Login: $MODO_LOGIN"
+  if [ -n "$VARIANTE_DESCRICAO" ]; then echo "Aplicacao: $VARIANTE_DESCRICAO"; else echo "Aplicacao: AGHUse $VERSAO_AGHUSE original (sem modificacoes)"; fi
   echo
   echo "URL ......................: $URL"
   if [ "$MODO_LOGIN" = "ldap-externo" ]; then
@@ -537,7 +586,7 @@ chmod 600 "$CRED"
 
 echo
 echo "${C_VERDE}  ==================================================================="
-echo "   AGHUse instalado com sucesso"
+echo "   AGHUse instalado com sucesso${VARIANTE_DESCRICAO:+ - $VARIANTE_DESCRICAO}"
 echo "  ===================================================================${C_FIM}"
 echo "   Acesso .............: $URL"
 echo "   Usuario ............: $ADMIN_LOGIN"

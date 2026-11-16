@@ -1,0 +1,35 @@
+﻿AGHUse 13.250-STABLE - Instalador para Windows
+Aplicativo para Gestão Hospitalar
+
+AVISO IMPORTANTE - LEIA ANTES DE CONTINUAR
+
+Este pacote destina-se exclusivamente a TESTE, AVALIAÇÃO e ESTUDO do sistema.
+
+- É fornecido "no estado em que se encontra", sem garantia de qualquer natureza e sem suporte técnico.
+
+- É uma iniciativa independente. NÃO é uma distribuição oficial do AGHUse e não tem vínculo com a Comunidade AGHUse, o Hospital de Clínicas de Porto Alegre (HCPA) ou a EBSERH.
+
+- O suporte técnico ao AGHUse é prestado pela Comunidade AGHUse somente às instituições integrantes da comunidade. Para conhecer o projeto oficial, entrar em contato ou integrar a comunidade:
+  https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse
+
+- Quem instala, configura e opera o sistema assume toda a responsabilidade por seu uso, pela segurança das informações e pelo cumprimento da legislação aplicável, inclusive a LGPD.
+
+- USE UM COMPUTADOR DEDICADO, físico ou virtual, sem outros sistemas em funcionamento. O instalador cria serviços do Windows (aghuse e aghuse-postgresql), um banco PostgreSQL próprio e uma regra no Firewall do Windows. Não execute em servidores que já estão em produção ou que hospedam outros sistemas.
+
+- O uso com dados reais de pacientes exige a validação descrita na seção "Uso em produção" do README.md (instalado na pasta "ferramentas").
+
+O QUE SERÁ INSTALADO (tudo incluído neste instalador, sem necessidade de internet)
+
+- AGHUse 13.250-STABLE, compilado do código-fonte público
+- Base inicial de demonstração, sem dados de pacientes
+- OpenJDK 17.0.2 (GPL v2 com Classpath Exception)
+- WildFly 26.1.3.Final (Apache License 2.0 / LGPL)
+- PostgreSQL 15 (PostgreSQL License)
+
+Este instalador não exige chave de ativação nem licença comercial.
+
+LICENÇA
+
+AGHUse: © Hospital de Clínicas de Porto Alegre, distribuído sob a Licença Pública Geral GNU (GPL), versão 2 ou posterior. Contato da comunidade: centralAGHUse@hcpa.edu.br.
+
+Os scripts deste instalador são distribuídos sem garantia, nos mesmos termos da GPL v2 ou posterior.

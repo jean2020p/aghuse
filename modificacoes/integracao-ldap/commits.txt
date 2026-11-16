@@ -1,0 +1,7 @@
+acaa07e0 integracao-ldap: troca de senha no diretorio LDAP/AD (UsuarioON.alterarSenha)
+b623cf18 integracao-ldap: tela Trocar Senha aceita nova senha de ate 64 caracteres (era 20)
+bc3ac380 integracao-ldap: suite de testes (unitarios, com LDAP simulado, e integracao com LDAP real opcional)
+4703c68c integracao-ldap: tela Trocar Senha exibe os rotulos dos campos (showLabel recebia texto em vez de true)
+e7e4844f integracao-ldap: identifica a variante nao oficial abaixo da versao (login e rodape)
+bb1f428c integracao-ldap: troca de senha tambem no modo banco (PostgreSQL), mensagens genericas
+f6e3a154 integracao-ldap: identificacao da variante so no rodape interno (login.xhtml volta ao original)

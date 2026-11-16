@@ -1,0 +1,1305 @@
+diff --git a/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenha.java b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenha.java
+new file mode 100644
+index 00000000..cada1bd7
+--- /dev/null
++++ b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenha.java
+@@ -0,0 +1,347 @@
++/** AGHUse - Aplicativo de Gestao Hospitalar
++  *
++  * Direitos Autorais Reservados (c) 2016, Hospital de Clinicas de Porto Alegre
++  *
++  * Este programa e software livre; voce pode redistribui-lo e/ou modifica-lo sob os termos de
++  * Licenca Publica Geral GNU conforme publicada pela Free Software Foundation; tanto a versao
++  * 2 da Licenca, como (a seu criterio) qualquer versao posterior.
++  *
++  * Este programa e distribuido na expectativa de que seja util, porem, SEM NENHUMA GARANTIA;
++  * nem mesmo a garantia implicita de COMERCIABILIDADE OU ADEQUACAO A UMA FINALIDADE ESPECIFICA.
++  * Consulte a Licenca Publica Geral do GNU para mais detalhes.
++  *
++  * Voce deve ter recebido uma copia da Licenca Publica Geral do GNU junto com este programa;
++  * se nao, escreva para a Free Software Foundation, Ind., no endereco 59 Temple Street, Suite
++  * 330, Boston, MA 02111-137 USA.
++  *
++  * Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI - Bairro Santa Cecilia, Porto Alegre - RS, 90.035-903. E-mail: centralAGHUse@hcpa.edu.br
++  */
++
++package br.gov.mec.aghu.casca.business;
++
++import java.io.ByteArrayOutputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.Hashtable;
++
++import javax.inject.Inject;
++import javax.naming.AuthenticationException;
++import javax.naming.Context;
++import javax.naming.NamingEnumeration;
++import javax.naming.NamingException;
++import javax.naming.directory.BasicAttribute;
++import javax.naming.directory.DirContext;
++import javax.naming.directory.ModificationItem;
++import javax.naming.directory.SearchControls;
++import javax.naming.directory.SearchResult;
++import javax.naming.ldap.ExtendedRequest;
++import javax.naming.ldap.ExtendedResponse;
++import javax.naming.ldap.InitialLdapContext;
++
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++
++import br.gov.mec.aghu.core.commons.ParametrosSistema;
++
++/**
++ * Troca da senha do proprio usuario no diretorio LDAP / Active Directory.
++ *
++ * MODIFICACAO (instalador independente do AGHUse, integracao-ldap): no AGHUse 13.250 o metodo
++ * UsuarioON.alterarSenha apenas lancava UnsupportedOperationException ("Alteracao de senha no
++ * LDAP/AD nao suportada"), de modo que a tela "Trocar Senha" (menu "Senha") nao funcionava fora
++ * do HCPA. Esta classe implementa a troca usando a mesma configuracao LDAP que o AGHUse ja usa
++ * para o login (sd_server_address, sd_server_port, sd_user_dn, sd_user_context_dn,
++ * sd_filter_expression), sem novas dependencias:
++ *
++ * 1. conecta ao diretorio autenticando COMO O PROPRIO USUARIO, com a senha atual (prova de posse);
++ * 2. tenta a operacao padrao LDAP "Password Modify" (RFC 3062), aceita por OpenLDAP e outros:
++ *    o servidor confere a senha atual, aplica o hash configurado (ex.: {SSHA}) e a politica de senhas;
++ * 3. se o servidor nao suportar a RFC 3062 (Active Directory / AD LDS), usa o metodo do AD:
++ *    remove a senha atual e grava a nova no atributo unicodePwd. O AD exige conexao segura
++ *    (LDAPS, porta 636) para isso.
++ *
++ * Nenhuma conta administrativa e usada: o usuario so consegue alterar a propria senha.
++ */
++public class ServicoDiretorioSenha {
++
++	private static final Log LOG = LogFactory.getLog(ServicoDiretorioSenha.class);
++
++	/** OID da operacao estendida LDAP Password Modify (RFC 3062). */
++	private static final String OID_PASSWORD_MODIFY = "1.3.6.1.4.1.4203.1.11.1";
++
++	private static final String TEMPO_CONEXAO_MS = "10000";
++	private static final String TEMPO_LEITURA_MS = "20000";
++
++	/** Motivo da falha na troca de senha, traduzido pelo UsuarioON em mensagem de negocio. */
++	public enum Motivo {
++		/** a senha atual nao confere (bind recusado). */
++		CREDENCIAL_INVALIDA,
++		/** o diretorio recusou a nova senha (politica de senhas, historico, complexidade). */
++		POLITICA_SENHA,
++		/** o diretorio nao permite a troca por esta conexao (ex.: AD sem LDAPS). */
++		NAO_PERMITIDO,
++		/** outro erro de comunicacao ou do servidor. */
++		ERRO_DIRETORIO
++	}
++
++	/** Falha na troca de senha. */
++	public static class FalhaTrocaSenhaException extends Exception {
++		private static final long serialVersionUID = 1L;
++		private final Motivo motivo;
++
++		public FalhaTrocaSenhaException(Motivo motivo, String mensagem, Throwable causa) {
++			super(mensagem, causa);
++			this.motivo = motivo;
++		}
++
++		public Motivo getMotivo() {
++			return motivo;
++		}
++	}
++
++	@Inject
++	private ParametrosSistema parametros;
++
++	/**
++	 * Indica se a autenticacao e feita por LDAP/AD (ha servidor e DN de usuario configurados).
++	 * No modo "banco" (realm AghuseDbConnectionSecurityRealm) estes parametros ficam vazios.
++	 */
++	public boolean isDiretorioConfigurado() {
++		String servidor = parametros.getParametro(ParametrosSistema.SD_SERVER_ADDRESS);
++		String userDn = parametros.getParametro(ParametrosSistema.SD_USER_DN);
++		return servidor != null && !servidor.isBlank() && userDn != null && userDn.contains("%s");
++	}
++
++	/**
++	 * Altera a senha do usuario no diretorio.
++	 *
++	 * @param login login do usuario (o mesmo usado no AGHUse)
++	 * @param senhaAtual senha atual
++	 * @param senhaNova nova senha
++	 */
++	public void alterarSenha(String login, String senhaAtual, String senhaNova) throws FalhaTrocaSenhaException {
++		String userDn = parametros.getParametro(ParametrosSistema.SD_USER_DN).replace("%s", escaparValorDn(login));
++		InitialLdapContext ctx = null;
++		try {
++			try {
++				ctx = conectar(userDn, senhaAtual);
++			} catch (AuthenticationException e) {
++				throw new FalhaTrocaSenhaException(Motivo.CREDENCIAL_INVALIDA, "senha atual recusada pelo diretorio", e);
++			}
++
++			try {
++				ctx.extendedOperation(new PasswordModifyRequest(senhaAtual, senhaNova));
++				LOG.info("Senha alterada no diretorio (RFC 3062) para o usuario " + login);
++				return;
++			} catch (NamingException e) {
++				int codigo = codigoLdap(e);
++				if (codigo == 19) { // constraintViolation: politica de senhas
++					throw new FalhaTrocaSenhaException(Motivo.POLITICA_SENHA, e.getMessage(), e);
++				}
++				if (codigo == 49) { // invalidCredentials: senha atual nao confere
++					throw new FalhaTrocaSenhaException(Motivo.CREDENCIAL_INVALIDA, e.getMessage(), e);
++				}
++				if (codigo == 50) { // insufficientAccessRights: ACL nao permite
++					throw new FalhaTrocaSenhaException(Motivo.NAO_PERMITIDO, e.getMessage(), e);
++				}
++				LOG.info("Diretorio nao aceitou Password Modify (RFC 3062), tentando metodo do Active Directory: " + e.getMessage());
++			}
++
++			alterarSenhaActiveDirectory(ctx, login, senhaAtual, senhaNova);
++			LOG.info("Senha alterada no diretorio (unicodePwd) para o usuario " + login);
++
++		} catch (NamingException e) {
++			throw new FalhaTrocaSenhaException(Motivo.ERRO_DIRETORIO, e.getMessage(), e);
++		} finally {
++			if (ctx != null) {
++				try {
++					ctx.close();
++				} catch (NamingException e) {
++					LOG.debug("Erro ao fechar a conexao com o diretorio", e);
++				}
++			}
++		}
++	}
++
++	/** Active Directory / AD LDS: remove a senha atual e adiciona a nova em unicodePwd (exige LDAPS). */
++	private void alterarSenhaActiveDirectory(InitialLdapContext ctx, String login, String senhaAtual, String senhaNova)
++			throws NamingException, FalhaTrocaSenhaException {
++		String dn = localizarDn(ctx, login);
++		ModificationItem[] mods = new ModificationItem[] {
++				new ModificationItem(DirContext.REMOVE_ATTRIBUTE, new BasicAttribute("unicodePwd", senhaUnicodePwd(senhaAtual))),
++				new ModificationItem(DirContext.ADD_ATTRIBUTE, new BasicAttribute("unicodePwd", senhaUnicodePwd(senhaNova))) };
++		try {
++			ctx.modifyAttributes(dn, mods);
++		} catch (NamingException e) {
++			int codigo = codigoLdap(e);
++			if (codigo == 19) {
++				throw new FalhaTrocaSenhaException(Motivo.POLITICA_SENHA, e.getMessage(), e);
++			}
++			if (codigo == 53 || codigo == 50) { // unwillingToPerform (sem LDAPS) ou sem permissao
++				throw new FalhaTrocaSenhaException(Motivo.NAO_PERMITIDO, e.getMessage(), e);
++			}
++			throw e;
++		}
++	}
++
++	/** Localiza o DN real do usuario (no AD o login pode ser %s@dominio, que nao e um DN). */
++	private String localizarDn(InitialLdapContext ctx, String login) throws NamingException {
++		String base = parametros.getParametro(ParametrosSistema.SD_USER_CONTEXT);
++		String filtro = parametros.getParametro(ParametrosSistema.SD_FILTER_EXPRESSION);
++		if (base == null || base.isBlank() || filtro == null || !filtro.contains("%s")) {
++			return parametros.getParametro(ParametrosSistema.SD_USER_DN).replace("%s", escaparValorDn(login));
++		}
++		SearchControls controles = new SearchControls();
++		controles.setSearchScope(SearchControls.SUBTREE_SCOPE);
++		controles.setReturningAttributes(new String[0]);
++		controles.setCountLimit(1);
++		NamingEnumeration<SearchResult> resultado = ctx.search(base, filtro.replace("%s", escaparValorFiltro(login)), controles);
++		try {
++			if (resultado.hasMore()) {
++				return resultado.next().getNameInNamespace();
++			}
++		} finally {
++			resultado.close();
++		}
++		throw new NamingException("usuario " + login + " nao encontrado em " + base);
++	}
++
++	/** Abre a conexao autenticada (visivel no pacote para os testes substituirem por um simulador). */
++	InitialLdapContext conectar(String principal, String senha) throws NamingException {
++		Hashtable<String, String> env = new Hashtable<>();
++		env.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
++		env.put(Context.PROVIDER_URL, montarUrls(parametros.getParametro(ParametrosSistema.SD_SERVER_ADDRESS),
++				parametros.getParametro(ParametrosSistema.SD_SERVER_PORT)));
++		env.put(Context.SECURITY_AUTHENTICATION, "simple");
++		env.put(Context.SECURITY_PRINCIPAL, principal);
++		env.put(Context.SECURITY_CREDENTIALS, senha);
++		env.put("com.sun.jndi.ldap.connect.timeout", TEMPO_CONEXAO_MS);
++		env.put("com.sun.jndi.ldap.read.timeout", TEMPO_LEITURA_MS);
++		return new InitialLdapContext(env, null);
++	}
++
++	/** Mesma regra do ServicoDiretorio (varios servidores separados por virgula); porta 636 usa LDAPS. */
++	static String montarUrls(String servidores, String porta) {
++		StringBuilder urls = new StringBuilder();
++		for (String servidor : servidores.split(",")) {
++			if (!servidor.isBlank()) {
++				String esquema = "636".equals(porta == null ? "" : porta.trim()) ? "ldaps://" : "ldap://";
++				urls.append(esquema).append(servidor.trim()).append(':').append(porta == null ? "389" : porta.trim()).append(' ');
++			}
++		}
++		return urls.toString().trim();
++	}
++
++	/** Codigo de resultado LDAP contido na mensagem da excecao JNDI ("[LDAP: error code 19 - ...]"). */
++	static int codigoLdap(NamingException e) {
++		String msg = e.getMessage();
++		if (msg != null) {
++			int i = msg.indexOf("error code ");
++			if (i >= 0) {
++				int j = i + "error code ".length();
++				int k = j;
++				while (k < msg.length() && Character.isDigit(msg.charAt(k))) {
++					k++;
++				}
++				if (k > j) {
++					return Integer.parseInt(msg.substring(j, k));
++				}
++			}
++		}
++		return -1;
++	}
++
++	/** Formato exigido pelo AD em unicodePwd: a senha entre aspas, em UTF-16LE. */
++	static byte[] senhaUnicodePwd(String senha) {
++		return ("\"" + senha + "\"").getBytes(StandardCharsets.UTF_16LE);
++	}
++
++	/** Escapa caracteres especiais de um valor de RDN (RFC 4514). */
++	static String escaparValorDn(String valor) {
++		StringBuilder sb = new StringBuilder();
++		for (int i = 0; i < valor.length(); i++) {
++			char c = valor.charAt(i);
++			if (",+\"\\<>;=".indexOf(c) >= 0 || (i == 0 && (c == ' ' || c == '#')) || (i == valor.length() - 1 && c == ' ')) {
++				sb.append('\\');
++			}
++			sb.append(c);
++		}
++		return sb.toString();
++	}
++
++	/** Escapa caracteres especiais de um valor em filtro LDAP (RFC 4515). */
++	static String escaparValorFiltro(String valor) {
++		StringBuilder sb = new StringBuilder();
++		for (char c : valor.toCharArray()) {
++			switch (c) {
++			case '*': sb.append("\\2a"); break;
++			case '(': sb.append("\\28"); break;
++			case ')': sb.append("\\29"); break;
++			case '\\': sb.append("\\5c"); break;
++			case '\0': sb.append("\\00"); break;
++			default: sb.append(c);
++			}
++		}
++		return sb.toString();
++	}
++
++	/**
++	 * Requisicao Password Modify (RFC 3062) para o proprio usuario autenticado:
++	 * PasswdModifyRequestValue ::= SEQUENCE { oldPasswd [1] OCTET STRING, newPasswd [2] OCTET STRING }
++	 */
++	static class PasswordModifyRequest implements ExtendedRequest {
++		private static final long serialVersionUID = 1L;
++		private final byte[] valor;
++
++		PasswordModifyRequest(String senhaAtual, String senhaNova) {
++			ByteArrayOutputStream seq = new ByteArrayOutputStream();
++			escreverTlv(seq, 0x81, senhaAtual.getBytes(StandardCharsets.UTF_8));
++			escreverTlv(seq, 0x82, senhaNova.getBytes(StandardCharsets.UTF_8));
++			ByteArrayOutputStream total = new ByteArrayOutputStream();
++			escreverTlv(total, 0x30, seq.toByteArray());
++			this.valor = total.toByteArray();
++		}
++
++		@Override
++		public String getID() {
++			return OID_PASSWORD_MODIFY;
++		}
++
++		@Override
++		public byte[] getEncodedValue() {
++			return valor.clone();
++		}
++
++		@Override
++		public ExtendedResponse createExtendedResponse(String id, byte[] berValue, int offset, int length) {
++			return new ExtendedResponse() {
++				private static final long serialVersionUID = 1L;
++
++				@Override
++				public String getID() {
++					return id;
++				}
++
++				@Override
++				public byte[] getEncodedValue() {
++					return berValue;
++				}
++			};
++		}
++
++		private static void escreverTlv(ByteArrayOutputStream out, int tag, byte[] conteudo) {
++			out.write(tag);
++			int n = conteudo.length;
++			if (n < 0x80) {
++				out.write(n);
++			} else if (n < 0x100) {
++				out.write(0x81);
++				out.write(n);
++			} else {
++				out.write(0x82);
++				out.write((n >> 8) & 0xFF);
++				out.write(n & 0xFF);
++			}
++			out.write(conteudo, 0, n);
++		}
++	}
++}
+diff --git a/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoSenhaBanco.java b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoSenhaBanco.java
+new file mode 100644
+index 00000000..3dd53cdc
+--- /dev/null
++++ b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoSenhaBanco.java
+@@ -0,0 +1,148 @@
++/** AGHUse - Aplicativo de Gestao Hospitalar
++  *
++  * Direitos Autorais Reservados (c) 2016, Hospital de Clinicas de Porto Alegre
++  *
++  * Este programa e software livre; voce pode redistribui-lo e/ou modifica-lo sob os termos de
++  * Licenca Publica Geral GNU conforme publicada pela Free Software Foundation; tanto a versao
++  * 2 da Licenca, como (a seu criterio) qualquer versao posterior.
++  *
++  * Este programa e distribuido na expectativa de que seja util, porem, SEM NENHUMA GARANTIA;
++  * nem mesmo a garantia implicita de COMERCIABILIDADE OU ADEQUACAO A UMA FINALIDADE ESPECIFICA.
++  * Consulte a Licenca Publica Geral do GNU para mais detalhes.
++  *
++  * Voce deve ter recebido uma copia da Licenca Publica Geral do GNU junto com este programa;
++  * se nao, escreva para a Free Software Foundation, Ind., no endereco 59 Temple Street, Suite
++  * 330, Boston, MA 02111-137 USA.
++  *
++  * Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI - Bairro Santa Cecilia, Porto Alegre - RS, 90.035-903. E-mail: centralAGHUse@hcpa.edu.br
++  */
++
++package br.gov.mec.aghu.casca.business;
++
++import java.sql.Connection;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.LinkedHashSet;
++import java.util.Set;
++
++import javax.naming.InitialContext;
++import javax.naming.NamingException;
++import javax.sql.DataSource;
++
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.FalhaTrocaSenhaException;
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.Motivo;
++
++/**
++ * Troca da senha do proprio usuario quando o login e feito pelo PostgreSQL (modo "banco",
++ * realm AghuseDbConnectionSecurityRealm). MODIFICACAO (integracao-ldap, variante nao oficial).
++ *
++ * No modo banco cada login e uma role do PostgreSQL, conferida pelo datasource de login
++ * (java:/aghuLoginDatasource, banco vazio "aghuse_login", com allow-multiple-users). A troca:
++ * 1. conecta pelo datasource de login COMO O PROPRIO USUARIO, com a senha atual (prova de posse);
++ * 2. executa ALTER ROLE CURRENT_USER PASSWORD (o PostgreSQL permite a qualquer role trocar a
++ *    propria senha, sem conta administrativa; o hash segue password_encryption, ex.: scram-sha-256);
++ * 3. encerra as conexoes daquela role (pg_terminate_backend), inclusive as guardadas no pool
++ *    do servidor de aplicacao com a senha antiga, para que a senha antiga deixe de valer na hora.
++ * O instalador cria a role em maiusculas e em minusculas (o login e aceito dos dois jeitos):
++ * as duas sao atualizadas.
++ *
++ * Requisito: o datasource de login deve ser NAO transacional (jta="false"); caso contrario o
++ * servidor de aplicacao recusa a conexao dentro da transacao da tela ("multiple last resources").
++ */
++public class ServicoSenhaBanco {
++
++	private static final Log LOG = LogFactory.getLog(ServicoSenhaBanco.class);
++
++	static final String JNDI_DATASOURCE_LOGIN = "java:/aghuLoginDatasource";
++
++	/** SQLSTATE do PostgreSQL para senha invalida (invalid_password). */
++	private static final String SQLSTATE_SENHA_INVALIDA = "28P01";
++
++	/** Datasource de login (visivel no pacote para os testes substituirem). */
++	DataSource obterDataSource() {
++		try {
++			return (DataSource) new InitialContext().lookup(JNDI_DATASOURCE_LOGIN);
++		} catch (NamingException | ClassCastException e) {
++			return null;
++		}
++	}
++
++	/** Indica se o login e feito pelo PostgreSQL (existe o datasource de login). */
++	public boolean isDisponivel() {
++		return obterDataSource() != null;
++	}
++
++	public void alterarSenha(String login, String senhaAtual, String senhaNova) throws FalhaTrocaSenhaException {
++		DataSource ds = obterDataSource();
++		if (ds == null) {
++			throw new FalhaTrocaSenhaException(Motivo.NAO_PERMITIDO, "datasource de login nao encontrado: " + JNDI_DATASOURCE_LOGIN, null);
++		}
++		Set<String> roles = new LinkedHashSet<>();
++		roles.add(login);
++		roles.add(login.toUpperCase());
++		roles.add(login.toLowerCase());
++
++		int alteradas = 0;
++		boolean senhaRecusada = false;
++		SQLException ultimoErro = null;
++		for (String role : roles) {
++			try (Connection c = ds.getConnection(role, senhaAtual)) {
++				try (Statement st = c.createStatement()) {
++					st.execute("ALTER ROLE CURRENT_USER PASSWORD " + literalSql(senhaNova));
++				}
++				encerrarConexoesDaRole(c);
++				alteradas++;
++				LOG.info("Senha alterada no PostgreSQL (modo banco) para a role " + role);
++			} catch (SQLException e) {
++				if (SQLSTATE_SENHA_INVALIDA.equals(estadoSql(e))) {
++					senhaRecusada = true; // role inexistente ou com outra senha: so conta se nenhuma for alterada
++				} else {
++					ultimoErro = e;
++				}
++				LOG.debug("Troca de senha da role " + role + " nao realizada: " + e.getMessage());
++			}
++		}
++		if (alteradas > 0) {
++			return;
++		}
++		if (ultimoErro != null && !senhaRecusada) {
++			throw new FalhaTrocaSenhaException(Motivo.ERRO_DIRETORIO, ultimoErro.getMessage(), ultimoErro);
++		}
++		throw new FalhaTrocaSenhaException(Motivo.CREDENCIAL_INVALIDA, "senha atual recusada pelo PostgreSQL", ultimoErro);
++	}
++
++	/**
++	 * Encerra as outras conexoes da role (pool com a senha antiga) e, por ultimo, a propria
++	 * conexao, para que ela nao volte ao pool autenticada com a senha antiga.
++	 */
++	private void encerrarConexoesDaRole(Connection c) {
++		try (Statement st = c.createStatement()) {
++			st.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = current_user AND pid <> pg_backend_pid()");
++		} catch (SQLException e) {
++			LOG.debug("Nao foi possivel encerrar as outras conexoes da role: " + e.getMessage());
++		}
++		try (Statement st = c.createStatement()) {
++			st.execute("SELECT pg_terminate_backend(pg_backend_pid())");
++		} catch (SQLException e) {
++			LOG.debug("Conexao propria encerrada (esperado): " + e.getMessage());
++		}
++	}
++
++	/** Literal SQL com aspas simples duplicadas (standard_conforming_strings = on, padrao do PostgreSQL). */
++	static String literalSql(String valor) {
++		return "'" + valor.replace("'", "''") + "'";
++	}
++
++	/** SQLSTATE da excecao ou de alguma causa encadeada (o pool pode embrulhar a excecao do driver). */
++	static String estadoSql(Throwable e) {
++		for (Throwable t = e; t != null; t = t.getCause()) {
++			if (t instanceof SQLException && ((SQLException) t).getSQLState() != null) {
++				return ((SQLException) t).getSQLState();
++			}
++		}
++		return null;
++	}
++}
+diff --git a/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/UsuarioON.java b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/UsuarioON.java
+index 190933e5..6c69ddf7 100644
+--- a/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/UsuarioON.java
++++ b/aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/UsuarioON.java
+@@ -153,13 +153,25 @@ public class UsuarioON extends BaseBusiness {
+ 	private AtribuicaoGruposAdRN atribuicaoGruposAdRN;
+ 	@Inject
+ 	private StarhDAO starhDAO;
++	/** integracao-ldap: troca de senha no diretorio LDAP/AD (antes nao suportada). */
++	@Inject
++	private ServicoDiretorioSenha servicoDiretorioSenha;
++	/** integracao-ldap: troca de senha no PostgreSQL quando o login e pelo modo "banco". */
++	@Inject
++	private ServicoSenhaBanco servicoSenhaBanco;
+     
+ 	protected enum UsuarioONExceptionCode implements BusinessExceptionCode {
+ 		CASCA_MENSAGEM_USUARIO_NAO_INFORMADO, CASCA_MENSAGEM_LOGIN_EXISTENTE, CASCA_MENSAGEM_USUARIO_NAO_ENCONTRADO, CASCA_MENSAGEM_PARAMETROS_NAO_INFORMADO,
+ 		CASCA_MENSAGEM_USUARIO_INATIVO, CASCA_MENSAGEM_USUARIO_SEM_PERFIL, CASCA_MENSAGEM_HORA_DIFERENTE, MSG_NAO_FOI_POSSIVEL_EXCLUIR_USUARIO, ERRO_AUTENTICACAO,
+-		CASCA_MENSAGEM_PERFIL_EXISTENTE, MSG_LOGIN_EXISTENTE, CASCA_USUARIO_NOME_EXISTENTE;
++		CASCA_MENSAGEM_PERFIL_EXISTENTE, MSG_LOGIN_EXISTENTE, CASCA_USUARIO_NOME_EXISTENTE,
++		// integracao-ldap: mensagens da troca de senha no diretorio
++		CASCA_MENSAGEM_SENHA_DIRETORIO_INDISPONIVEL, CASCA_MENSAGEM_SENHA_TAMANHO_MINIMO, CASCA_MENSAGEM_SENHA_POLITICA_DIRETORIO,
++		CASCA_MENSAGEM_SENHA_DIRETORIO_NAO_PERMITE, CASCA_MENSAGEM_SENHA_ERRO_DIRETORIO;
+ 	}
+ 
++	/** integracao-ldap: tamanho minimo da nova senha aceito pelo AGHUse (o diretorio pode exigir mais). */
++	private static final int SENHA_TAMANHO_MINIMO = 8;
++
+     public void imprimirUsuarioLogado(String usuarioSetado) {
+     	RapServidores servidor = servidorLogadoFacade.obterServidorLogadoSemCache();
+     	if (servidor != null) {
+@@ -740,8 +752,42 @@ public class UsuarioON extends BaseBusiness {
+ 		return perfisUsuariosJn;
+ 	}
+ 
++	/**
++	 * Altera a senha do usuario no diretorio LDAP / Active Directory.
++	 *
++	 * integracao-ldap: no AGHUse 13.250 original este metodo lancava UnsupportedOperationException e a
++	 * tela "Trocar Senha" nao funcionava. Agora a troca e feita autenticando como o proprio usuario:
++	 * - login por LDAP/AD: no diretorio (ServicoDiretorioSenha);
++	 * - login pelo PostgreSQL (modo "banco"): na role do PostgreSQL (ServicoSenhaBanco).
++	 */
+ 	public boolean alterarSenha(String login, String senhaAtual, String senhaNova) throws ApplicationBusinessException {
+-		throw new UnsupportedOperationException();
++		boolean ldap = servicoDiretorioSenha.isDiretorioConfigurado();
++		if (!ldap && !servicoSenhaBanco.isDisponivel()) {
++			throw new ApplicationBusinessException(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_DIRETORIO_INDISPONIVEL);
++		}
++		if (senhaNova == null || senhaNova.length() < SENHA_TAMANHO_MINIMO) {
++			throw new ApplicationBusinessException(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_TAMANHO_MINIMO, SENHA_TAMANHO_MINIMO);
++		}
++		try {
++			if (ldap) {
++				servicoDiretorioSenha.alterarSenha(login, senhaAtual, senhaNova);
++			} else {
++				servicoSenhaBanco.alterarSenha(login, senhaAtual, senhaNova);
++			}
++			return true;
++		} catch (ServicoDiretorioSenha.FalhaTrocaSenhaException e) {
++			LOG.warn("Troca de senha de " + login + " recusada (" + e.getMotivo() + "): " + e.getMessage());
++			switch (e.getMotivo()) {
++			case CREDENCIAL_INVALIDA:
++				throw new ApplicationBusinessException(UsuarioONExceptionCode.ERRO_AUTENTICACAO);
++			case POLITICA_SENHA:
++				throw new ApplicationBusinessException(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_POLITICA_DIRETORIO);
++			case NAO_PERMITIDO:
++				throw new ApplicationBusinessException(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_DIRETORIO_NAO_PERMITE);
++			default:
++				throw new ApplicationBusinessException(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_ERRO_DIRETORIO);
++			}
++		}
+ 	}
+ 
+ 	/**
+diff --git a/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaLdapRealTest.java b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaLdapRealTest.java
+new file mode 100644
+index 00000000..d6485449
+--- /dev/null
++++ b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaLdapRealTest.java
+@@ -0,0 +1,132 @@
++package br.gov.mec.aghu.casca.business;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++import java.lang.reflect.Field;
++import java.util.Hashtable;
++
++import javax.naming.Context;
++import javax.naming.NamingException;
++import javax.naming.directory.BasicAttribute;
++import javax.naming.directory.BasicAttributes;
++import javax.naming.directory.DirContext;
++import javax.naming.directory.InitialDirContext;
++
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.FalhaTrocaSenhaException;
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.Motivo;
++import br.gov.mec.aghu.core.commons.ParametrosSistema;
++
++/**
++ * Teste de integracao da troca de senha (integracao-ldap) contra um servidor LDAP REAL (ex.: OpenLDAP).
++ *
++ * So executa quando as propriedades abaixo sao informadas; caso contrario e ignorado (assumeTrue):
++ *   -Daghuse.it.ldap.host=127.0.0.1 -Daghuse.it.ldap.port=389
++ *   -Daghuse.it.ldap.base=ou=people,dc=aghuse,dc=local
++ *   -Daghuse.it.ldap.admin.dn=cn=admin,dc=aghuse,dc=local -Daghuse.it.ldap.admin.senha=...
++ * Cria uma conta temporaria uid=teste-it-<numero> na base, troca a senha e remove a conta ao final.
++ */
++public class ServicoDiretorioSenhaLdapRealTest {
++
++	private String host;
++	private String porta;
++	private String base;
++	private String adminDn;
++	private String adminSenha;
++	private String login;
++	private String dn;
++	private ServicoDiretorioSenha servico;
++
++	@BeforeEach
++	public void setUp() throws Exception {
++		host = System.getProperty("aghuse.it.ldap.host");
++		assumeTrue(host != null && !host.isBlank(), "LDAP real nao informado (-Daghuse.it.ldap.host): teste ignorado");
++		porta = System.getProperty("aghuse.it.ldap.port", "389");
++		base = System.getProperty("aghuse.it.ldap.base");
++		adminDn = System.getProperty("aghuse.it.ldap.admin.dn");
++		adminSenha = System.getProperty("aghuse.it.ldap.admin.senha");
++		login = "teste-it-" + System.currentTimeMillis();
++		dn = "uid=" + login + "," + base;
++
++		BasicAttributes attrs = new BasicAttributes(true);
++		BasicAttribute oc = new BasicAttribute("objectClass");
++		oc.add("inetOrgPerson");
++		attrs.put(oc);
++		attrs.put("uid", login);
++		attrs.put("cn", "Teste Integracao");
++		attrs.put("sn", "Integracao");
++		attrs.put("userPassword", "SenhaInicial123");
++		DirContext admin = conectar(adminDn, adminSenha);
++		admin.createSubcontext(dn, attrs);
++		admin.close();
++
++		ParametrosSistema parametros = mock(ParametrosSistema.class);
++		when(parametros.getParametro(ParametrosSistema.SD_SERVER_ADDRESS)).thenReturn(host);
++		when(parametros.getParametro(ParametrosSistema.SD_SERVER_PORT)).thenReturn(porta);
++		when(parametros.getParametro(ParametrosSistema.SD_USER_DN)).thenReturn("uid=%s," + base);
++		when(parametros.getParametro(ParametrosSistema.SD_USER_CONTEXT)).thenReturn(base);
++		when(parametros.getParametro(ParametrosSistema.SD_FILTER_EXPRESSION)).thenReturn("(&(objectClass=inetOrgPerson)(uid=%s))");
++		servico = new ServicoDiretorioSenha();
++		Field f = ServicoDiretorioSenha.class.getDeclaredField("parametros");
++		f.setAccessible(true);
++		f.set(servico, parametros);
++	}
++
++	@AfterEach
++	public void limpar() throws Exception {
++		if (host != null && !host.isBlank()) {
++			DirContext admin = conectar(adminDn, adminSenha);
++			try {
++				admin.destroySubcontext(dn);
++			} finally {
++				admin.close();
++			}
++		}
++	}
++
++	private DirContext conectar(String principal, String senha) throws NamingException {
++		Hashtable<String, String> env = new Hashtable<>();
++		env.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
++		env.put(Context.PROVIDER_URL, "ldap://" + host + ":" + porta);
++		env.put(Context.SECURITY_AUTHENTICATION, "simple");
++		env.put(Context.SECURITY_PRINCIPAL, principal);
++		env.put(Context.SECURITY_CREDENTIALS, senha);
++		return new InitialDirContext(env);
++	}
++
++	private boolean autentica(String senha) {
++		try {
++			conectar(dn, senha).close();
++			return true;
++		} catch (NamingException e) {
++			return false;
++		}
++	}
++
++	@Test
++	public void trocaDeSenhaNoLdapReal() throws Exception {
++		assertTrue(autentica("SenhaInicial123"));
++
++		servico.alterarSenha(login, "SenhaInicial123", "SenhaNovaIntegracao456");
++
++		assertTrue(autentica("SenhaNovaIntegracao456"), "a nova senha deve autenticar");
++		assertFalse(autentica("SenhaInicial123"), "a senha antiga nao deve mais autenticar");
++	}
++
++	@Test
++	public void senhaAtualErradaNoLdapReal() {
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha(login, "SenhaErrada000", "SenhaNovaIntegracao456"));
++		assertEquals(Motivo.CREDENCIAL_INVALIDA, e.getMotivo());
++		assertTrue(autentica("SenhaInicial123"), "a senha original deve continuar valendo");
++	}
++}
+diff --git a/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaTest.java b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaTest.java
+new file mode 100644
+index 00000000..9c853e0b
+--- /dev/null
++++ b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaTest.java
+@@ -0,0 +1,236 @@
++package br.gov.mec.aghu.casca.business;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.doThrow;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import java.lang.reflect.Field;
++import java.nio.charset.StandardCharsets;
++
++import javax.naming.AuthenticationException;
++import javax.naming.NamingEnumeration;
++import javax.naming.NamingException;
++import javax.naming.directory.DirContext;
++import javax.naming.directory.ModificationItem;
++import javax.naming.directory.SearchControls;
++import javax.naming.directory.SearchResult;
++import javax.naming.ldap.ExtendedRequest;
++import javax.naming.ldap.InitialLdapContext;
++
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.FalhaTrocaSenhaException;
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.Motivo;
++import br.gov.mec.aghu.core.commons.ParametrosSistema;
++
++/**
++ * Testes da troca de senha no diretorio LDAP/AD (integracao-ldap).
++ * O servidor LDAP e simulado: a conexao (InitialLdapContext) e substituida por um mock.
++ */
++public class ServicoDiretorioSenhaTest {
++
++	private static final String USER_DN = "uid=%s,ou=people,dc=aghuse,dc=local";
++
++	private ParametrosSistema parametros;
++	private InitialLdapContext ctx;
++	private ServicoDiretorioSenha servico;
++	private String principalUsado;
++	private String senhaUsada;
++	private NamingException falhaAoConectar;
++
++	@BeforeEach
++	public void setUp() throws Exception {
++		parametros = mock(ParametrosSistema.class);
++		when(parametros.getParametro(ParametrosSistema.SD_SERVER_ADDRESS)).thenReturn("127.0.0.1");
++		when(parametros.getParametro(ParametrosSistema.SD_SERVER_PORT)).thenReturn("389");
++		when(parametros.getParametro(ParametrosSistema.SD_USER_DN)).thenReturn(USER_DN);
++		when(parametros.getParametro(ParametrosSistema.SD_USER_CONTEXT)).thenReturn("ou=people,dc=aghuse,dc=local");
++		when(parametros.getParametro(ParametrosSistema.SD_FILTER_EXPRESSION)).thenReturn("(&(objectClass=inetOrgPerson)(uid=%s))");
++		ctx = mock(InitialLdapContext.class);
++		falhaAoConectar = null;
++		servico = new ServicoDiretorioSenha() {
++			@Override
++			InitialLdapContext conectar(String principal, String senha) throws NamingException {
++				principalUsado = principal;
++				senhaUsada = senha;
++				if (falhaAoConectar != null) {
++					throw falhaAoConectar;
++				}
++				return ctx;
++			}
++		};
++		Field f = ServicoDiretorioSenha.class.getDeclaredField("parametros");
++		f.setAccessible(true);
++		f.set(servico, parametros);
++	}
++
++	// ---------------------------------------------------------------- configuracao
++
++	@Test
++	public void diretorioConfiguradoQuandoHaServidorEDnComMarcador() {
++		assertTrue(servico.isDiretorioConfigurado());
++	}
++
++	@Test
++	public void diretorioNaoConfiguradoNoModoBanco() {
++		when(parametros.getParametro(ParametrosSistema.SD_SERVER_ADDRESS)).thenReturn("");
++		assertFalse(servico.isDiretorioConfigurado());
++	}
++
++	@Test
++	public void diretorioNaoConfiguradoSemMarcadorNoDn() {
++		when(parametros.getParametro(ParametrosSistema.SD_USER_DN)).thenReturn("uid=fixo,ou=people");
++		assertFalse(servico.isDiretorioConfigurado());
++	}
++
++	// ---------------------------------------------------------------- troca pela RFC 3062 (OpenLDAP)
++
++	@Test
++	public void trocaComSucessoPelaRfc3062AutenticandoComoOProprioUsuario() throws Exception {
++		servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456");
++
++		assertEquals("uid=MSILVA,ou=people,dc=aghuse,dc=local", principalUsado);
++		assertEquals("senhaAtual123", senhaUsada);
++		ArgumentCaptor<ExtendedRequest> req = ArgumentCaptor.forClass(ExtendedRequest.class);
++		verify(ctx).extendedOperation(req.capture());
++		assertEquals("1.3.6.1.4.1.4203.1.11.1", req.getValue().getID());
++		verify(ctx, never()).modifyAttributes(anyString(), any(ModificationItem[].class));
++		verify(ctx).close();
++	}
++
++	@Test
++	public void senhaAtualRecusadaNoBind() {
++		falhaAoConectar = new AuthenticationException("[LDAP: error code 49 - Invalid Credentials]");
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "errada", "senhaNova456"));
++		assertEquals(Motivo.CREDENCIAL_INVALIDA, e.getMotivo());
++	}
++
++	@Test
++	public void politicaDeSenhaDoDiretorio() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 19 - Password fails quality checking policy]"));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "senhaAtual123", "fraca"));
++		assertEquals(Motivo.POLITICA_SENHA, e.getMotivo());
++		verify(ctx).close();
++	}
++
++	@Test
++	public void senhaAtualRecusadaPelaOperacaoDeTroca() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 49 - Invalid Credentials]"));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(Motivo.CREDENCIAL_INVALIDA, e.getMotivo());
++	}
++
++	@Test
++	public void aclDoDiretorioNaoPermite() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 50 - Insufficient Access Rights]"));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(Motivo.NAO_PERMITIDO, e.getMotivo());
++	}
++
++	// ---------------------------------------------------------------- alternativa Active Directory (unicodePwd)
++
++	@SuppressWarnings("unchecked")
++	private void simularBuscaDoDn(String dn) throws NamingException {
++		NamingEnumeration<SearchResult> resultado = mock(NamingEnumeration.class);
++		SearchResult sr = mock(SearchResult.class);
++		when(sr.getNameInNamespace()).thenReturn(dn);
++		when(resultado.hasMore()).thenReturn(true);
++		when(resultado.next()).thenReturn(sr);
++		when(ctx.search(anyString(), anyString(), any(SearchControls.class))).thenReturn(resultado);
++	}
++
++	@Test
++	public void semRfc3062UsaUnicodePwdDoActiveDirectory() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 2 - unsupported extended operation]"));
++		simularBuscaDoDn("CN=Maria Silva,OU=people,DC=hospital,DC=local");
++
++		servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456");
++
++		ArgumentCaptor<ModificationItem[]> mods = ArgumentCaptor.forClass(ModificationItem[].class);
++		verify(ctx).modifyAttributes(eq("CN=Maria Silva,OU=people,DC=hospital,DC=local"), mods.capture());
++		ModificationItem[] m = mods.getValue();
++		assertEquals(2, m.length);
++		assertEquals(DirContext.REMOVE_ATTRIBUTE, m[0].getModificationOp());
++		assertEquals("unicodePwd", m[0].getAttribute().getID());
++		assertArrayEquals("\"senhaAtual123\"".getBytes(StandardCharsets.UTF_16LE), (byte[]) m[0].getAttribute().get());
++		assertEquals(DirContext.ADD_ATTRIBUTE, m[1].getModificationOp());
++		assertArrayEquals("\"senhaNova456\"".getBytes(StandardCharsets.UTF_16LE), (byte[]) m[1].getAttribute().get());
++	}
++
++	@Test
++	public void activeDirectorySemLdapsNaoPermite() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 2 - unsupported]"));
++		simularBuscaDoDn("CN=MSILVA,OU=people,DC=hospital,DC=local");
++		doThrow(new NamingException("[LDAP: error code 53 - 0000001F: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM)]"))
++				.when(ctx).modifyAttributes(anyString(), any(ModificationItem[].class));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(Motivo.NAO_PERMITIDO, e.getMotivo());
++	}
++
++	@Test
++	public void activeDirectoryPoliticaDeSenha() throws Exception {
++		when(ctx.extendedOperation(any())).thenThrow(new NamingException("[LDAP: error code 2 - unsupported]"));
++		simularBuscaDoDn("CN=MSILVA,OU=people,DC=hospital,DC=local");
++		doThrow(new NamingException("[LDAP: error code 19 - 0000052D: Constraint violation]"))
++				.when(ctx).modifyAttributes(anyString(), any(ModificationItem[].class));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(Motivo.POLITICA_SENHA, e.getMotivo());
++	}
++
++	// ---------------------------------------------------------------- utilitarios
++
++	@Test
++	public void codificacaoBerDaRequisicaoRfc3062() {
++		byte[] v = new ServicoDiretorioSenha.PasswordModifyRequest("velha", "nova123").getEncodedValue();
++		byte[] esperado = { 0x30, 16, (byte) 0x81, 5, 'v', 'e', 'l', 'h', 'a', (byte) 0x82, 7, 'n', 'o', 'v', 'a', '1', '2', '3' };
++		assertArrayEquals(esperado, v);
++	}
++
++	@Test
++	public void codificacaoBerComSenhaLonga() {
++		String longa = "x".repeat(200);
++		byte[] v = new ServicoDiretorioSenha.PasswordModifyRequest("a", longa).getEncodedValue();
++		// [2] newPasswd com comprimento em forma longa: 0x82 0x81 0xC8 (200)
++		assertEquals((byte) 0x82, v[v.length - 200 - 3]);
++		assertEquals((byte) 0x81, v[v.length - 200 - 2]);
++		assertEquals((byte) 200, v[v.length - 200 - 1]);
++	}
++
++	@Test
++	public void leituraDoCodigoDeErroLdap() {
++		assertEquals(19, ServicoDiretorioSenha.codigoLdap(new NamingException("[LDAP: error code 19 - policy]")));
++		assertEquals(53, ServicoDiretorioSenha.codigoLdap(new NamingException("[LDAP: error code 53 - WILL_NOT_PERFORM]")));
++		assertEquals(-1, ServicoDiretorioSenha.codigoLdap(new NamingException("connection refused")));
++	}
++
++	@Test
++	public void montagemDasUrls() {
++		assertEquals("ldap://127.0.0.1:389", ServicoDiretorioSenha.montarUrls("127.0.0.1", "389"));
++		assertEquals("ldaps://ad1.local:636 ldaps://ad2.local:636", ServicoDiretorioSenha.montarUrls("ad1.local, ad2.local", "636"));
++	}
++
++	@Test
++	public void escapesDeDnEFiltro() {
++		assertEquals("a\\,b\\+c", ServicoDiretorioSenha.escaparValorDn("a,b+c"));
++		assertEquals("\\#x", ServicoDiretorioSenha.escaparValorDn("#x"));
++		assertEquals("a\\2ab\\28c\\29", ServicoDiretorioSenha.escaparValorFiltro("a*b(c)"));
++	}
++}
+diff --git a/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoSenhaBancoTest.java b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoSenhaBancoTest.java
+new file mode 100644
+index 00000000..ccf7686d
+--- /dev/null
++++ b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoSenhaBancoTest.java
+@@ -0,0 +1,142 @@
++package br.gov.mec.aghu.casca.business;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import java.sql.Connection;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.List;
++
++import javax.sql.DataSource;
++
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.FalhaTrocaSenhaException;
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.Motivo;
++
++/**
++ * Testes da troca de senha no modo "banco" (integracao-ldap). O PostgreSQL e simulado:
++ * o datasource de login, a conexao e o statement sao mocks.
++ */
++public class ServicoSenhaBancoTest {
++
++	private DataSource ds;
++	private Connection conexao;
++	private Statement st;
++	private ServicoSenhaBanco servico;
++
++	@BeforeEach
++	public void setUp() throws Exception {
++		ds = mock(DataSource.class);
++		conexao = mock(Connection.class);
++		st = mock(Statement.class);
++		when(conexao.createStatement()).thenReturn(st);
++		servico = new ServicoSenhaBanco() {
++			@Override
++			DataSource obterDataSource() {
++				return ds;
++			}
++		};
++	}
++
++	private static SQLException senhaInvalida() {
++		return new SQLException("FATAL: password authentication failed", "28P01");
++	}
++
++	@Test
++	public void disponivelQuandoHaDatasourceDeLogin() {
++		assertTrue(servico.isDisponivel());
++	}
++
++	@Test
++	public void indisponivelSemDatasourceDeLogin() {
++		ServicoSenhaBanco semDs = new ServicoSenhaBanco() {
++			@Override
++			DataSource obterDataSource() {
++				return null;
++			}
++		};
++		assertFalse(semDs.isDisponivel());
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class, () -> semDs.alterarSenha("AGHU", "a", "b"));
++		assertEquals(Motivo.NAO_PERMITIDO, e.getMotivo());
++	}
++
++	@Test
++	public void trocaAsDuasRolesConectandoComoOProprioUsuario() throws Exception {
++		when(ds.getConnection(anyString(), eq("senhaAtual123"))).thenReturn(conexao);
++
++		servico.alterarSenha("AGHU", "senhaAtual123", "senhaNova456");
++
++		verify(ds).getConnection("AGHU", "senhaAtual123");
++		verify(ds).getConnection("aghu", "senhaAtual123");
++		ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
++		verify(st, org.mockito.Mockito.times(6)).execute(sql.capture());
++		List<String> comandos = sql.getAllValues();
++		assertEquals("ALTER ROLE CURRENT_USER PASSWORD 'senhaNova456'", comandos.get(0));
++		assertTrue(comandos.get(1).contains("pg_terminate_backend(pid)"), "encerra as outras conexoes da role (pool com a senha antiga)");
++		assertEquals("SELECT pg_terminate_backend(pg_backend_pid())", comandos.get(2));
++	}
++
++	@Test
++	public void roleEmMinusculasInexistenteNaoImpedeATroca() throws Exception {
++		when(ds.getConnection("AGHU", "senhaAtual123")).thenReturn(conexao);
++		when(ds.getConnection("aghu", "senhaAtual123")).thenThrow(senhaInvalida());
++
++		servico.alterarSenha("AGHU", "senhaAtual123", "senhaNova456");
++
++		verify(st).execute("ALTER ROLE CURRENT_USER PASSWORD 'senhaNova456'");
++	}
++
++	@Test
++	public void senhaAtualErrada() throws Exception {
++		when(ds.getConnection(anyString(), anyString())).thenThrow(senhaInvalida());
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("AGHU", "errada", "senhaNova456"));
++		assertEquals(Motivo.CREDENCIAL_INVALIDA, e.getMotivo());
++		verify(st, never()).execute(anyString());
++	}
++
++	@Test
++	public void senhaInvalidaEmbrulhadaPeloPoolEReconhecida() throws Exception {
++		SQLException doPool = new SQLException("IJ031020: Unable to obtain connection", (String) null);
++		doPool.initCause(senhaInvalida());
++		when(ds.getConnection(anyString(), anyString())).thenThrow(doPool);
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("AGHU", "errada", "senhaNova456"));
++		assertEquals(Motivo.CREDENCIAL_INVALIDA, e.getMotivo());
++	}
++
++	@Test
++	public void erroDeComunicacaoComOBanco() throws Exception {
++		when(ds.getConnection(anyString(), anyString())).thenThrow(new SQLException("Connection refused", "08001"));
++		FalhaTrocaSenhaException e = assertThrows(FalhaTrocaSenhaException.class,
++				() -> servico.alterarSenha("AGHU", "senhaAtual123", "senhaNova456"));
++		assertEquals(Motivo.ERRO_DIRETORIO, e.getMotivo());
++	}
++
++	@Test
++	public void literalSqlEscapaAspas() {
++		assertEquals("'abc'", ServicoSenhaBanco.literalSql("abc"));
++		assertEquals("'a''b''''c'", ServicoSenhaBanco.literalSql("a'b''c"));
++	}
++
++	@Test
++	public void estadoSqlProcuraNasCausas() {
++		SQLException externa = new SQLException("externa");
++		externa.initCause(new RuntimeException("meio", new SQLException("x", "28P01")));
++		assertEquals("28P01", ServicoSenhaBanco.estadoSql(externa));
++		assertNull(ServicoSenhaBanco.estadoSql(new RuntimeException("sem sql")));
++	}
++}
+diff --git a/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/UsuarioONAlterarSenhaTest.java b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/UsuarioONAlterarSenhaTest.java
+new file mode 100644
+index 00000000..6d385853
+--- /dev/null
++++ b/aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/UsuarioONAlterarSenhaTest.java
+@@ -0,0 +1,124 @@
++package br.gov.mec.aghu.casca.business;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.Mockito.doThrow;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import org.junit.jupiter.api.Test;
++import org.mockito.Mock;
++
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.FalhaTrocaSenhaException;
++import br.gov.mec.aghu.casca.business.ServicoDiretorioSenha.Motivo;
++import br.gov.mec.aghu.casca.business.UsuarioON.UsuarioONExceptionCode;
++import br.gov.mec.aghu.core.exception.ApplicationBusinessException;
++import br.gov.mec.aghu.core.test.AGHUBaseUnitTest;
++
++/**
++ * Testes de UsuarioON.alterarSenha (integracao-ldap).
++ * No AGHUse 13.250 original o metodo lancava UnsupportedOperationException.
++ */
++public class UsuarioONAlterarSenhaTest extends AGHUBaseUnitTest<UsuarioON> {
++
++	@Mock
++	private ServicoDiretorioSenha mockedServicoDiretorioSenha;
++
++	@Mock
++	private ServicoSenhaBanco mockedServicoSenhaBanco;
++
++	@Test
++	public void trocaComSucesso() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(true);
++		assertTrue(systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		verify(mockedServicoDiretorioSenha).alterarSenha("MSILVA", "senhaAtual123", "senhaNova456");
++	}
++
++	@Test
++	public void semLdapESemBancoIndisponivel() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(false);
++		when(mockedServicoSenhaBanco.isDisponivel()).thenReturn(false);
++		ApplicationBusinessException e = assertThrows(ApplicationBusinessException.class,
++				() -> systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_DIRETORIO_INDISPONIVEL, e.getCode());
++		verify(mockedServicoDiretorioSenha, never()).alterarSenha(anyString(), anyString(), anyString());
++		verify(mockedServicoSenhaBanco, never()).alterarSenha(anyString(), anyString(), anyString());
++	}
++
++	@Test
++	public void modoBancoTrocaNoPostgres() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(false);
++		when(mockedServicoSenhaBanco.isDisponivel()).thenReturn(true);
++		assertTrue(systemUnderTest.alterarSenha("AGHU", "senhaAtual123", "senhaNova456"));
++		verify(mockedServicoSenhaBanco).alterarSenha("AGHU", "senhaAtual123", "senhaNova456");
++		verify(mockedServicoDiretorioSenha, never()).alterarSenha(anyString(), anyString(), anyString());
++	}
++
++	@Test
++	public void modoBancoSenhaAtualInvalida() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(false);
++		when(mockedServicoSenhaBanco.isDisponivel()).thenReturn(true);
++		doThrow(new FalhaTrocaSenhaException(Motivo.CREDENCIAL_INVALIDA, "simulado", null))
++				.when(mockedServicoSenhaBanco).alterarSenha(anyString(), anyString(), anyString());
++		ApplicationBusinessException e = assertThrows(ApplicationBusinessException.class,
++				() -> systemUnderTest.alterarSenha("AGHU", "errada", "senhaNova456"));
++		assertEquals(UsuarioONExceptionCode.ERRO_AUTENTICACAO, e.getCode());
++	}
++
++	@Test
++	public void modoLdapTemPrioridadeSobreBanco() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(true);
++		systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456");
++		verify(mockedServicoDiretorioSenha).alterarSenha("MSILVA", "senhaAtual123", "senhaNova456");
++		verify(mockedServicoSenhaBanco, never()).alterarSenha(anyString(), anyString(), anyString());
++	}
++
++	@Test
++	public void novaSenhaAbaixoDoTamanhoMinimo() throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(true);
++		ApplicationBusinessException e = assertThrows(ApplicationBusinessException.class,
++				() -> systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", "curta"));
++		assertEquals(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_TAMANHO_MINIMO, e.getCode());
++		verify(mockedServicoDiretorioSenha, never()).alterarSenha(anyString(), anyString(), anyString());
++	}
++
++	@Test
++	public void novaSenhaNula() {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(true);
++		ApplicationBusinessException e = assertThrows(ApplicationBusinessException.class,
++				() -> systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", null));
++		assertEquals(UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_TAMANHO_MINIMO, e.getCode());
++	}
++
++	private void falhaDoDiretorio(Motivo motivo, UsuarioONExceptionCode esperado) throws Exception {
++		when(mockedServicoDiretorioSenha.isDiretorioConfigurado()).thenReturn(true);
++		doThrow(new FalhaTrocaSenhaException(motivo, "simulado", null))
++				.when(mockedServicoDiretorioSenha).alterarSenha(anyString(), anyString(), anyString());
++		ApplicationBusinessException e = assertThrows(ApplicationBusinessException.class,
++				() -> systemUnderTest.alterarSenha("MSILVA", "senhaAtual123", "senhaNova456"));
++		assertEquals(esperado, e.getCode());
++	}
++
++	@Test
++	public void senhaAtualInvalida() throws Exception {
++		falhaDoDiretorio(Motivo.CREDENCIAL_INVALIDA, UsuarioONExceptionCode.ERRO_AUTENTICACAO);
++	}
++
++	@Test
++	public void politicaDeSenhaDoDiretorio() throws Exception {
++		falhaDoDiretorio(Motivo.POLITICA_SENHA, UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_POLITICA_DIRETORIO);
++	}
++
++	@Test
++	public void diretorioNaoPermite() throws Exception {
++		falhaDoDiretorio(Motivo.NAO_PERMITIDO, UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_DIRETORIO_NAO_PERMITE);
++	}
++
++	@Test
++	public void erroDeComunicacaoComODiretorio() throws Exception {
++		falhaDoDiretorio(Motivo.ERRO_DIRETORIO, UsuarioONExceptionCode.CASCA_MENSAGEM_SENHA_ERRO_DIRETORIO);
++	}
++}
+diff --git a/aghu/aghu-web/src/main/resources/bundle/aghu/casca/messages_casca.properties b/aghu/aghu-web/src/main/resources/bundle/aghu/casca/messages_casca.properties
+index 36087d39..4bcceace 100644
+--- a/aghu/aghu-web/src/main/resources/bundle/aghu/casca/messages_casca.properties
++++ b/aghu/aghu-web/src/main/resources/bundle/aghu/casca/messages_casca.properties
+@@ -1096,4 +1096,11 @@ LABEL_REINICIALIZACAO_SENHA_ALTERADO_EM=Data
+ LABEL_REINICIALIZACAO_SENHA_APLICATIVO=Aplicativo
+ 
+ LABEL_TITULO_JANELA=Confirma\u00E7\u00E3o de libera\u00E7\u00E3o de acesso remoto.
+-MSG_CONFIRMACAO_LIBERACAO_ACESSO_REMOTO=Confirma a libera\u00E7\u00E3o de acesso remoto para 
+\ No newline at end of file
++MSG_CONFIRMACAO_LIBERACAO_ACESSO_REMOTO=Confirma a libera\u00E7\u00E3o de acesso remoto para 
++
++# integracao-ldap: troca de senha (LDAP/AD ou PostgreSQL no modo banco)
++CASCA_MENSAGEM_SENHA_DIRETORIO_INDISPONIVEL=A troca de senha pelo AGHUse não está disponível nesta instalação. Procure o administrador do sistema.
++CASCA_MENSAGEM_SENHA_TAMANHO_MINIMO=A nova senha deve ter no m\u00EDnimo {0} caracteres.
++CASCA_MENSAGEM_SENHA_POLITICA_DIRETORIO=A nova senha foi recusada pela política de senhas. Use uma senha mais forte e diferente das anteriores.
++CASCA_MENSAGEM_SENHA_DIRETORIO_NAO_PERMITE=O servidor de autenticação não permite trocar a senha por esta conexão (no Active Directory é preciso LDAPS). Procure o administrador do sistema.
++CASCA_MENSAGEM_SENHA_ERRO_DIRETORIO=Não foi possível alterar a senha. Tente novamente ou procure o administrador do sistema.
+diff --git a/aghu/aghu-web/src/main/webapp/WEB-INF/templates/casca_template.xhtml b/aghu/aghu-web/src/main/webapp/WEB-INF/templates/casca_template.xhtml
+index a467fea1..b144365a 100644
+--- a/aghu/aghu-web/src/main/webapp/WEB-INF/templates/casca_template.xhtml
++++ b/aghu/aghu-web/src/main/webapp/WEB-INF/templates/casca_template.xhtml
+@@ -75,6 +75,7 @@ Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI -
+ 											                    and messages.git_commit_id_abbrev != 'git_commit_id_abbrev' ? messages.git_commit_id_abbrev : messages.git_commit_id_abbrev} atualizada em #{messages.now != null
+ 	         													and messages.now != ''
+ 	         													and messages.now != 'now' ? messages.now : messages.git_commit_time}
++	         		<br/>Variante nÃ£o oficial: integraÃ§Ã£o LDAP
+ 	         		</span>											
+ 				</p:notificationBar>		    	
+ 			</p:cache>	
+diff --git a/aghu/aghu-web/src/main/webapp/pages/casca/senha/trocarSenha.xhtml b/aghu/aghu-web/src/main/webapp/pages/casca/senha/trocarSenha.xhtml
+index f3fa82cf..0ea9f2af 100644
+--- a/aghu/aghu-web/src/main/webapp/pages/casca/senha/trocarSenha.xhtml
++++ b/aghu/aghu-web/src/main/webapp/pages/casca/senha/trocarSenha.xhtml
+@@ -43,7 +43,7 @@ Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI -
+ 				<legend>AlteraÃ§Ã£o de Senha</legend>
+ 				<aghu:linha>
+ 					<mec:field label="#{messages.CASCA_LABEL_SENHA_ATUAL}" id="senhaAtualField"
+-		        		showLabel="#{messages.CASCA_LABEL_SENHA_ATUAL}" title="#{messages.CASCA_TITULO_SENHA_ATUAL}" 
++		        		showLabel="true" title="#{messages.CASCA_TITULO_SENHA_ATUAL}" 
+ 		        		required="true">
+ 						<p:password name="senhaAtual" rendered="#{senhaController.exibirSenhaAtual}"
+ 							value="#{senhaController.senhaAtual}"
+@@ -51,17 +51,17 @@ Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI -
+ 					</mec:field>
+ 					
+ 					<mec:field label="#{messages.CASCA_LABEL_NOVA_SENHA}" id="novaSenhaField"
+-		        		showLabel="#{messages.CASCA_LABEL_SENHA_ATUAL}" title="#{messages.CASCA_TITULO_NOVA_SENHA}" 
++		        		showLabel="true" title="#{messages.CASCA_TITULO_NOVA_SENHA}" 
+ 		        		required="true">
+-						<p:password name="novaSenha" maxlength="20"
++						<p:password name="novaSenha" maxlength="64"
+ 							value="#{senhaController.novaSenha}" required="true"
+ 							id="novaSenha" />
+ 					</mec:field>
+ 					
+ 					<mec:field label="#{messages.CASCA_LABEL_CONFIRMAR_SENHA}" id="confirmarSenhaField"
+-		        		showLabel="#{messages.CASCA_LABEL_SENHA_ATUAL}" title="#{messages.CASCA_TITULO_CONFIRMAR_SENHA}" 
++		        		showLabel="true" title="#{messages.CASCA_TITULO_CONFIRMAR_SENHA}" 
+ 		        		required="true">
+-						<p:password	name="confirmarSenha" maxlength="20" id="confirmarSenha"
++						<p:password	name="confirmarSenha" maxlength="64" id="confirmarSenha"
+ 							value="#{senhaController.confirmarSenha}" required="true" />
+ 					</mec:field>
+ 				</aghu:linha>

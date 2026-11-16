@@ -4,6 +4,10 @@ Instalação automatizada do **AGHUse – Aplicativo para Gestão Hospitalar** e
 
 O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre (HCPA) e mantido pela Comunidade AGHUse. Ele tem origem comum com o **AGHU – Aplicativo de Gestão para Hospitais Universitários**, a versão distribuída pela Ebserh aos hospitais universitários federais.
 
+> **Comunidade AGHUse:** para conhecer o projeto oficial, entrar em contato ou integrar a comunidade, acesse **[https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse](https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse)**.
+
+> **Software público e livre.** O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre, hospital público federal (empresa pública vinculada ao Ministério da Educação e à UFRGS), com recursos públicos, e distribuído como software livre sob a licença GPL v2. Qualquer pessoa ou instituição tem o direito de **baixar, usar, estudar, modificar e redistribuir** o sistema, nos termos da licença, sem custo de licenciamento. Este instalador e as modificações aqui publicadas seguem os mesmos termos, com o código-fonte aberto.
+
 ---
 
 ## Aviso importante
@@ -12,7 +16,7 @@ O AGHUse é desenvolvido pelo Hospital de Clínicas de Porto Alegre (HCPA) e man
 >
 > - É fornecido **"no estado em que se encontra", sem garantia de qualquer natureza e sem suporte técnico**.
 > - É uma iniciativa independente. **Não é uma distribuição oficial** do AGHUse e não tem vínculo com a Comunidade AGHUse, o Hospital de Clínicas de Porto Alegre ou a EBSERH.
-> - O suporte técnico ao AGHUse é prestado pela Comunidade AGHUse **somente às instituições integrantes da comunidade**. Fora dela, o acesso se limita aos arquivos e às instruções de instalação.
+> - O suporte técnico ao AGHUse é prestado pela Comunidade AGHUse **somente às instituições integrantes da comunidade**. Fora dela, o acesso se limita aos arquivos e às instruções de instalação. Para conhecer a comunidade ou integrá-la: [https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse](https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse).
 > - Quem instala, configura e opera o sistema assume toda a responsabilidade por seu uso, pela segurança das informações e pelo cumprimento da legislação aplicável, inclusive a LGPD.
 > - **Use uma máquina dedicada e recém-instalada**, física ou virtual, com Linux e sem outros sistemas em funcionamento. **Não execute o instalador em servidores que já estão em produção ou que hospedam outros sistemas.** Ele instala e reconfigura pacotes e serviços (PostgreSQL, OpenLDAP, Java, serviços systemd) e altera permissões de banco de dados, o que pode afetar aplicações existentes. A execução em máquinas compartilhadas é feita **por conta e risco** de quem a realiza.
 > - O uso com dados reais de pacientes exige a validação descrita em [Uso em produção](#uso-em-produção).
@@ -51,7 +55,7 @@ A aplicação `aghu.ear` deste pacote foi compilada a partir do código-fonte co
 | Sistema operacional | Ubuntu Server 22.04 LTS | Ubuntu Server 22.04 LTS |
 | Rede | IP fixo na rede interna | IP fixo e nome DNS interno |
 
-- O WildFly reserva 5 GB de memória para a aplicação; o mínimo aceito é 4 GB, e com menos o sistema não inicializa. O PostgreSQL e o sistema operacional precisam do restante. Com menos de 12 GB de RAM, o instalador usa 4 GB; com menos de 8 GB, a instalação é recusada.
+- O WildFly reserva 5 GB de memória para a aplicação, que é também o mínimo: com 4 GB a primeira inicialização termina em falta de memória (`OutOfMemoryError`). O PostgreSQL e o sistema operacional precisam do restante. Com menos de 8 GB de RAM, a instalação é recusada.
 - O espaço em disco recomendado considera o crescimento do banco, os logs, os índices de busca e os backups locais.
 - **Sistemas suportados:** Ubuntu Server 22.04 LTS (instalação completa sem internet). Ubuntu 24.04 LTS e Debian 12 também são aceitos, mas o PostgreSQL e o OpenLDAP são baixados dos repositórios oficiais.
 - **Máquina dedicada:** servidor ou máquina virtual com Linux recém-instalado, reservado só para o AGHUse. Não use servidores com outros sistemas em funcionamento (veja o [Aviso importante](#aviso-importante)). Uma máquina virtual permite descartar o ambiente e repetir a instalação com facilidade.
@@ -61,30 +65,41 @@ A aplicação `aghu.ear` deste pacote foi compilada a partir do código-fonte co
 
 ## Conteúdo do pacote
 
+Cada sistema operacional tem o **seu próprio arquivo de instalação**, só com o que é necessário para ele. Os arquivos ficam na página **[Versões (Releases)](https://github.com/jean2020p/aghuse/releases/latest)**.
+
+**Windows:** um único instalador, `aghuse_setup_13.250-STABLE[_variante-...]_Windows.exe` (~960 MB), com tudo incluído. Depois de instalado, fica em `C:\AGHUse`:
+
 ```
-aghuse/
-├── instalar.sh          instalador
-├── aghuse.conf          parâmetros da instalação (edite antes de instalar)
-├── usuario.sh           contas de acesso (login e senha) no diretório LDAP
-├── verificar.sh         verificação do estado da instalação
-├── README.md            este documento
-├── LICENSE              licença GPL v2
-├── lib/
-│   └── configurar_wildfly.py
-├── pacote/
-│   ├── aghu.ear                         aplicação AGHUse
-│   ├── dbaghu.dmp                       base inicial (PostgreSQL)
-│   ├── wildfly-aghuse-overlay.tar.gz    módulos e configuração do AGHUse para o WildFly
-│   ├── wildfly-aghuse-removidos.txt
-│   └── SHA256SUMS                       hashes de integridade
-└── dependencias/                        componentes obtidos das fontes oficiais
-    ├── java/                            OpenJDK 17.0.2
-    ├── wildfly/                         WildFly 26.1.3.Final
-    ├── apt/ubuntu-22.04/                pacotes do PostgreSQL 15, OpenLDAP e utilitários
-    └── SHA256SUMS
+C:\AGHUse\
+├── jdk-17.0.2\  wildfly-26.1.3.Final\  pgsql\  pgdata\     Java, servidor de aplicação e PostgreSQL
+└── ferramentas\
+    ├── usuario.bat / verificar.bat / desinstalar.bat      contas de acesso, verificação e remoção
+    ├── aghuse.conf                                        parâmetros usados na instalação
+    ├── CADASTRO_DE_USUARIOS.md                            passo a passo para cadastrar usuários
+    └── README.md, LICENSE
 ```
 
-O instalador usa primeiro os arquivos da pasta `dependencias/` e só busca na internet o que não estiver nela. Os hashes SHA-256 de todos os arquivos são conferidos antes da instalação.
+**Linux:** um arquivo compactado, `aghuse-13.250-STABLE[_variante-...]-linux.tar.gz` (~1 GB), que se descompacta na pasta `aghuse/`:
+
+```
+aghuse/
+├── instalar-assistente.sh   instalador com telas (recomendado)
+├── instalar.sh              instalador sem telas (lê o aghuse.conf)
+├── aghuse.conf              parâmetros da instalação
+├── usuario.sh               contas de acesso (login e senha)
+├── verificar.sh             verificação da instalação
+├── lib/                     rotinas de configuração e de verificação
+├── pacote/                  aplicação (aghu.ear), base inicial e configuração do WildFly
+├── dependencias/            OpenJDK 17, WildFly 26.1.3 e pacotes do Ubuntu 22.04 (instalação sem internet)
+├── docs/CADASTRO_DE_USUARIOS.md
+└── README.md, LICENSE
+```
+
+Os arquivos grandes estão divididos em partes de até 95 MB (`*.parte-001`, `*.parte-002` ...). O instalador junta as partes e confere os hashes SHA-256 de todos os arquivos antes de instalar.
+
+Nos pacotes da **variante** também vão o arquivo `VARIANTE`, que identifica a versão modificada, e o resumo do que mudou (`modificacoes/integracao-ldap/README.md`).
+
+**Repositório (para quem desenvolve):** além do conteúdo acima, o repositório guarda o código dos instaladores do Windows (`windows/`), a geração dos pacotes (`distribuicao/`), o código-fonte, o *patch* e os testes das modificações (`modificacoes/`) e as notas técnicas (`docs/INSTALADORES.md`). Nada disso é necessário para instalar.
 
 ---
 
@@ -167,46 +182,192 @@ Para a avaliação com este instalador, basta **um profissional de TI** com conh
 
 ## Instalação
 
-**1. Baixe o instalador no servidor**
+### 1. Escolha a versão
+
+Há **dois pacotes** para cada sistema. O instalador, o banco e a configuração são iguais nos dois; muda só a aplicação.
+
+| | **Variante "integração LDAP"** (recomendada, não oficial) | **Original** |
+|---|---|---|
+| Aplicação | AGHUse 13.250-STABLE **com um ajuste nosso**: a troca de senha | AGHUse 13.250-STABLE **exatamente** como compilado do código oficial |
+| Trocar a própria senha pela tela **Senha** do AGHUse | ✅ nos três modos de login: LDAP local (Linux), banco de dados (Windows) e AD/LDAP da instituição | ❌ dá erro (não implementado no original) |
+| Identificação | "Variante não oficial: integração LDAP" no rodapé interno, após o login (a tela de login pública não muda) | — |
+| Quando escolher | uso e avaliação no dia a dia | comparar com a versão da comunidade ou reproduzir um defeito para relatar a ela |
+
+A variante é uma **modificação independente**, sem vínculo com a Comunidade AGHUse. Tudo o que mudou está documentado em [modificacoes/integracao-ldap/](modificacoes/integracao-ldap/README.md):
+- objetivo, funcionamento e limitações;
+- os arquivos **originais** e **modificados**, lado a lado, e o *patch*;
+- os testes automatizados (38 novos, mais a regressão dos 40 já existentes no módulo);
+- como voltar ao original.
+
+Para trocar de uma versão para a outra numa instalação existente, basta rodar o instalador da outra versão: o banco e a configuração são preservados.
+
+### 2. Instalação no Windows
+
+**Requisitos:**
+- Windows 10/11 (1809 ou superior) ou Windows Server 2019/2022/2025, 64 bits;
+- **12 GB de RAM** (16 GB recomendado);
+- 20 GB livres (100 GB recomendado);
+- usuário administrador;
+- computador **dedicado** (físico ou virtual).
+
+**Passos:**
+1. Baixe o instalador na página de [Versões](https://github.com/jean2020p/aghuse/releases/latest):
+   - variante: `aghuse_setup_13.250-STABLE_variante-integracao-ldap-1_Windows.exe`;
+   - ou original: `aghuse_setup_13.250-STABLE_Windows.exe`.
+2. **Dê dois cliques no arquivo** e confirme a permissão de administrador.
+3. Siga o assistente. **Não há nada a preencher**: o ambiente de teste vem pré-configurado.
+
+   | Tela | O que fazer |
+   |---|---|
+   | Aviso | ler e aceitar as condições de uso |
+   | Autenticação | **LDAP local** (recomendado, já marcado) ou banco de dados (avaliação rápida); nada a preencher |
+   | Verificação dos requisitos | conferir; o assistente não deixa continuar abaixo do mínimo |
+   | Outros sistemas neste computador | aparece só se houver outros sistemas (bancos de dados, servidores web, e-SUS...); para continuar, marque "Li, estou ciente... e assumo o risco" |
+   | Pronto para instalar | mostra a configuração pré-definida; clique em **Instalar** |
+
+   Configuração pré-definida: pasta `C:\AGHUse`, login por **LDAP local** (AD LDS, componente gratuito do próprio Windows), administrador `AGHU` com senha gerada, porta 8080 liberada no firewall (redes privadas e de domínio).
+
+4. Aguarde de 15 a 45 minutos. A barra de progresso mostra cada etapa.
+5. A tela final mostra o endereço, o usuário **e a senha** do administrador, e abre o **arquivo de credenciais**.
+6. Acesse pelo ícone **AGHUse** na Área de Trabalho, que abre `http://localhost:8080/aghu`. De outros computadores da rede, use `http://<ip-do-computador>:8080/aghu`.
+
+**Depois de instalado:**
+
+| Item | Windows |
+|---|---|
+| Serviços | `aghuse` (WildFly, conta *LocalService*), `aghuse-postgresql` (PostgreSQL privativo, só conexões locais) e `ADAM_aghuseldap` (LDAP local, porta 50389, só este computador) |
+| Credenciais | `C:\ProgramData\AGHUse\aghuse-credenciais-aghuse.txt` (somente Administradores); menu Iniciar → AGHUse → *Credenciais da instalação* |
+| Cadastrar usuários | menu Iniciar → AGHUse → *Como cadastrar usuários* ([passo a passo](docs/CADASTRO_DE_USUARIOS.md)) |
+| Contas de acesso | `C:\AGHUse\ferramentas\usuario.bat criar LOGIN "NOME" email` (Prompt de Comando como Administrador) |
+| Verificação | menu Iniciar → AGHUse → *Verificar a instalação* |
+| Logs | instalação: `C:\ProgramData\AGHUse\logs\`; aplicação: `C:\AGHUse\wildfly-26.1.3.Final\standalone\log\server.log` |
+| Remoção | Painel de Controle → Programas → AGHUse. Pergunta "Deseja APAGAR também todos os dados e configurações?": **Sim** apaga tudo (banco, contas do LDAP local, senhas, credenciais e logs); **Não** (padrão) remove só o programa e mantém os dados para reinstalar |
+
+**Diferenças em relação ao Linux:**
+- O LDAP local usa o **AD LDS** do próprio Windows, no lugar do OpenLDAP. As contas ficam em `CN=<login>,OU=people,DC=aghuse,DC=local` e são administradas pelo `usuario.bat`.
+- O mínimo de memória é maior: o Windows ocupa ~2,4 GB, contra ~0,5 GB de um Linux sem interface gráfica. Na medição de teste, o total foi de ~9,6 GB: WildFly ~6,5 GB, PostgreSQL ~0,2 GB e Windows ~2,4 GB.
+
+**Instalação silenciosa (sem telas, para automação):**
+
+Abra o **Prompt de Comando como Administrador**, vá até a pasta onde o instalador foi baixado e execute **um** dos comandos abaixo. O `start /wait` faz o Prompt esperar o fim da instalação (de 15 a 45 minutos).
+
+Variante:
+
+```bat
+cd /d %USERPROFILE%\Downloads
+start /wait aghuse_setup_13.250-STABLE_variante-integracao-ldap-1_Windows.exe /VERYSILENT /SUPPRESSMSGBOXES /LOG="C:\aghuse-setup.log"
+```
+
+Original:
+
+```bat
+cd /d %USERPROFILE%\Downloads
+start /wait aghuse_setup_13.250-STABLE_Windows.exe /VERYSILENT /SUPPRESSMSGBOXES /LOG="C:\aghuse-setup.log"
+```
+
+Depois, confira o resultado:
+
+```bat
+echo Codigo de saida: %ERRORLEVEL%
+type C:\ProgramData\AGHUse\aghuse-credenciais-aghuse.txt
+```
+
+O código `0` indica sucesso. O arquivo de credenciais traz o endereço, o usuário e a senha. Em caso de erro, veja `C:\aghuse-setup.log` (as linhas do instalador começam com `motor:`).
+
+Opções que podem ser acrescentadas ao comando (todas opcionais):
+
+| Opção | Efeito |
+|---|---|
+| `/ACEITO_RISCO=sim` | instala mesmo se o computador tiver outros sistemas (bancos de dados, servidores web, e-SUS). Sem ela, nesse caso, a instalação é recusada |
+| `/PORTA=8180` | porta de acesso, de 8080 a 8999 (padrão: 8080) |
+| `/MODO=banco` | login pelo banco de dados em vez do LDAP local (padrão: `ldap-local`) |
+| `/RECRIAR=sim` | reinstalação: **apaga** o banco e restaura a base inicial (padrão: mantém os dados) |
+| `/FIREWALL=nao` | não libera a porta no Firewall do Windows (padrão: libera) |
+| `/MEMORIA=6G` | memória do WildFly (padrão: 5G) |
+
+Exemplo completo, com porta 8180 e aceite de risco:
+
+```bat
+start /wait aghuse_setup_13.250-STABLE_variante-integracao-ldap-1_Windows.exe /VERYSILENT /SUPPRESSMSGBOXES /LOG="C:\aghuse-setup.log" /ACEITO_RISCO=sim /PORTA=8180
+```
+
+**Outra configuração (produção, AD da instituição, outra porta):** baixe o projeto, ajuste o `windows\aghuse.conf` (recomendado) e execute `instalar.bat` como Administrador.
+
+### 3. Instalação no Linux
+
+**Requisitos:**
+- Ubuntu Server 22.04 LTS (instalação completa sem internet); Ubuntu 24.04 e Debian 12 também são aceitos, mas o PostgreSQL e o OpenLDAP são baixados da internet;
+- 64 bits, **8 GB de RAM** (16 GB recomendado), 20 GB livres (100 GB recomendado);
+- usuário com `sudo`;
+- servidor **dedicado** (físico ou virtual).
+
+**Passos** (no terminal do servidor, inclusive por SSH):
+
+**1. Baixe o arquivo da sua versão**
 
 ```bash
-sudo apt-get install -y git
-git clone https://github.com/jean2020p/aghuse.git
+# variante (recomendada)
+wget https://github.com/jean2020p/aghuse/releases/latest/download/aghuse-13.250-STABLE_variante-integracao-ldap-1-linux.tar.gz
+# ou original
+wget https://github.com/jean2020p/aghuse/releases/latest/download/aghuse-13.250-STABLE-linux.tar.gz
+```
+
+Sem internet no servidor: baixe o arquivo em outro computador e copie-o (por exemplo, com `scp` ou um pendrive).
+
+**2. (Recomendado) Confira a integridade**
+
+```bash
+wget https://github.com/jean2020p/aghuse/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+O resultado deve ser `OK` para o arquivo baixado.
+
+**3. Descompacte e entre na pasta**
+
+```bash
+tar xzf aghuse-13.250-STABLE*-linux.tar.gz
 cd aghuse
 ```
 
-Também é possível baixar o arquivo ZIP pelo botão **Code → Download ZIP** desta página e descompactá-lo no servidor. Os arquivos grandes estão divididos em partes de até 95 MB (`*.parte-001`, `*.parte-002` ...), e o instalador os junta automaticamente antes de conferir os hashes SHA-256.
-
-**2. Revise os parâmetros**
+**4. Execute o instalador com telas**
 
 ```bash
-nano aghuse.conf
+sudo ./instalar-assistente.sh
 ```
 
-Para um ambiente de teste, os valores padrão já servem: o login é feito em um diretório LDAP instalado no próprio servidor (`MODO_LOGIN="ldap-local"`).
+Não há nada a preencher: o ambiente de teste vem **pré-configurado** (LDAP local, administrador `AGHU` com senha gerada, porta 8080). O assistente funciona no próprio terminal e segue as mesmas etapas do Windows:
+1. aviso e aceite (nas telas de texto, use as setas para rolar e **TAB + Enter** para continuar);
+2. verificação dos requisitos;
+3. autenticação: **LDAP local** (recomendado, já marcado) ou banco de dados;
+4. outros sistemas na máquina, com aceite de risco (marque com a **barra de espaço**);
+5. em reinstalação: manter os dados ou apagar o banco;
+6. resumo da configuração pré-definida e **Instalar**;
+7. barra de progresso;
+8. tela final com o endereço, o usuário e a senha do administrador, e a opção de ver as credenciais.
 
-**3. Execute o instalador**
+A instalação leva de 20 a 60 minutos; a etapa mais demorada é a restauração da base inicial. Para **produção ou outra configuração** (LDAP/AD da instituição, outra porta, proxy reverso), ajuste o `aghuse.conf` (recomendado) e use o `instalar.sh` abaixo.
+
+**Alternativa sem telas (automação):** edite o `aghuse.conf` (parâmetros na seção [Parâmetros](#parâmetros-aghuseconf)) e execute:
 
 ```bash
 sudo ./instalar.sh
 ```
 
-A instalação leva de 20 a 60 minutos, conforme o desempenho do disco. A restauração da base inicial é a etapa mais demorada; em disco SSD, leva cerca de 15 minutos. No final, o instalador mostra o endereço de acesso e onde ficou gravada a senha do administrador.
+Se a máquina tiver outros sistemas, o instalador **para** e pede o aceite: digite `ACEITO` no terminal ou use `ACEITO_RISCO="sim"` no `aghuse.conf`. O aceite fica registrado em `/etc/aghuse/aceite-risco-<SERVICO>.txt`. Em servidores de produção que já rodam outro sistema, por exemplo o e-SUS, **não instale**.
 
-**4. Acesse o sistema**
+**5. Acesse o sistema**
 
 ```
 http://<ip-do-servidor>:8080/aghu
 ```
 
 - **Usuário:** `AGHU`
-- **Senha:** gerada na instalação e gravada em `/root/aghuse-credenciais-aghuse.txt`.
+- **Senha:** gerada na instalação. Para consultar: `sudo cat /root/aghuse-credenciais-aghuse.txt`
+- **Cadastrar usuários:** `sudo ./usuario.sh criar LOGIN "NOME" email`, depois o cadastro dentro do AGHUse ([passo a passo](docs/CADASTRO_DE_USUARIOS.md)).
+- **Verificar a instalação:** `sudo ./verificar.sh`
 
-Para consultar a senha:
-
-```bash
-sudo cat /root/aghuse-credenciais-aghuse.txt
-```
+> **Para quem desenvolve:** também é possível clonar o repositório (`git clone https://github.com/jean2020p/aghuse.git`) e instalar a partir dele com os mesmos comandos. Isso instala a versão **original**: a variante só existe nos pacotes da página de Versões, porque a aplicação modificada não fica no repositório.
 
 ---
 
@@ -266,6 +427,7 @@ A tela do sistema usa *websocket* para avisos de sessão. Se o proxy tiver regra
 |---|---|---|
 | `AMBIENTE` | `teste` | `teste` ou `producao`. Em produção, há verificações adicionais. |
 | `CONFIRMO_PRODUCAO` | `nao` | Precisa ser `sim` quando `AMBIENTE=producao`. |
+| `ACEITO_RISCO` | `nao` | `sim` para instalar sem terminal em uma máquina com outros sistemas (ver [Instalação](#instalação)). |
 | `NOME_AMBIENTE` | `AGHUSE-TESTE` | Nome de identificação do ambiente. |
 | `MODO_LOGIN` | `ldap-local` | `ldap-local`, `ldap-externo` ou `banco` (ver [Autenticação e usuários](#autenticação-e-usuários)). |
 | `ADMIN_LOGIN` / `ADMIN_SENHA` | `AGHU` / gerada | Administrador da base inicial. |
@@ -286,11 +448,13 @@ A tela do sistema usa *websocket* para avisos de sessão. Se o proxy tiver regra
 ### Senhas
 
 - **Senhas em branco são geradas automaticamente:** 32 caracteres aleatórios, gravados em `/root/aghuse-credenciais-<SERVICO>.txt`, que só o usuário root lê.
-- **Senhas informadas manualmente:** só letras e números, com no mínimo 16 caracteres (20 em produção).
+- **Senhas informadas manualmente:** só letras e números. Senha do administrador (`ADMIN_SENHA`): no mínimo 8 caracteres; senhas internas (banco, conta de serviço): no mínimo 16 (20 em produção). Em branco, são geradas: 12 caracteres para o administrador, 32 para as internas. O mínimo de 8 do administrador é uma regra **deste instalador** para o ambiente de **teste** (o AGHUse em si não define tamanho de senha); em produção, use senhas de 12 caracteres ou mais e a política de senhas do AD/LDAP da instituição.
 - **Senhas dos usuários do banco:** gravadas no formato `scram-sha-256`.
 - **Acesso ao PostgreSQL:** somente pela própria máquina.
 
 ## Autenticação e usuários
+
+> **Passo a passo para cadastrar um usuário** (conta de acesso no LDAP ou no banco + cadastro dentro do AGHUse), para cada modo de login: **[docs/CADASTRO_DE_USUARIOS.md](docs/CADASTRO_DE_USUARIOS.md)**.
 
 ### Como funciona
 
@@ -315,7 +479,7 @@ Se qualquer etapa falhar, o login é recusado. Nesta versão, o login **não exi
 
 | Modo | Diretório de senhas | Indicado para |
 |---|---|---|
-| `ldap-local` (padrão) | OpenLDAP instalado no próprio servidor, acessível só pela própria máquina | Testes e avaliação. Contas criadas com `usuario.sh`. |
+| `ldap-local` (padrão) | Diretório no próprio computador, acessível só por ele: OpenLDAP no Linux, AD LDS no Windows | Testes e avaliação. Contas criadas com `usuario.sh` / `usuario.bat`. |
 | `ldap-externo` | LDAP ou Active Directory da instituição | **Produção** (obrigatório quando `AMBIENTE=producao`). |
 | `banco` | Sem diretório: a senha é conferida pelo PostgreSQL, em um banco separado e vazio (`aghuse_login`), sem acesso aos dados | Avaliação sem diretório. Contas criadas com `usuario.sh`. |
 
@@ -407,7 +571,9 @@ Esse fluxo depende de serviços internos daquela instituição (parâmetro `P_UR
 
 ---
 
-## Após a instalação
+## Após a instalação (Linux)
+
+No Windows, as mesmas tarefas estão no menu Iniciar → AGHUse e na tabela de [Instalação no Windows](#2-instalação-no-windows).
 
 | Tarefa | Comando |
 |---|---|
@@ -469,6 +635,26 @@ Informações técnicas úteis para quem instala, configura ou compila o AGHUse 
 - Antes de restaurar a base, crie as roles referenciadas nas permissões: `acesso_completo`, `acesso_leitura`, `escrita_integra`, `ugen_bi`, `ugen_pesquisa`, `ugen_surex` e `agh`.
 - Restaure com `pg_restore --no-tablespaces -j <núcleos>`.
 - O driver JDBC distribuído (PostgreSQL 42.6.0) é compatível com autenticação `scram-sha-256`, o padrão das versões atuais do PostgreSQL.
+- **Página em branco depois do login** (defeito do AGHUse, presente no original e na variante). No primeiro login de cada usuário, o AGHUse grava os ícones da tela inicial na tabela `casca.csc_dashboard`. Se o mesmo usuário entrar duas vezes ao mesmo tempo nesse primeiro acesso (por exemplo, em dois navegadores), os ícones são gravados em dobro. A restrição única da tabela não impede, porque as colunas `modal` e `id_favorito` ficam vazias (`NULL`). A partir daí, todo login desse usuário mostra a página em branco, e o `server.log` registra `A ID de componente panel_NNNNN já foi encontrada na visualização`. O instalador remove as duplicatas e cria um índice que impede a repetição. Numa instalação feita por outro meio, a correção é:
+
+  ```sql
+  DELETE FROM casca.csc_dashboard d USING casca.csc_dashboard o
+   WHERE d.id_usuario = o.id_usuario AND d.id_favorito IS NOT DISTINCT FROM o.id_favorito
+     AND d.modal IS NOT DISTINCT FROM o.modal AND d.id > o.id;
+  CREATE UNIQUE INDEX IF NOT EXISTS csc_dsh_uk_instalador
+    ON casca.csc_dashboard (id_usuario, coalesce(modal, ''), coalesce(id_favorito, -1));
+  ```
+
+  Depois, basta recarregar a página: não é preciso reiniciar o serviço.
+- **Vínculo do administrador `AGHU`.** Na base inicial, o `AGHU` está ligado ao servidor de matrícula **9999999** (vínculo 955), pelo campo `usuario` de `agh.rap_servidores`. Se alguém usar **Criar Login** nesse servidor (tela *Usuário*), o vínculo passa para o login novo e o `AGHU` fica sem servidor. A sessão aberta continua funcionando, mas os próximos logins e a troca de senha falham ("senha atual não confere"), e o `server.log` registra `Nenhum Servidor do HU encontrado associado ao usuário AGHU`. O instalador devolve o vínculo ao `AGHU` e cria um *trigger* que recusa essa operação. Numa instalação feita por outro meio:
+
+  ```sql
+  UPDATE agh.rap_servidores SET usuario = 'AGHU'
+   WHERE matricula = 9999999 AND vin_codigo = 955
+     AND NOT EXISTS (SELECT 1 FROM agh.rap_servidores s WHERE upper(s.usuario) = 'AGHU');
+  ```
+
+  O login que tinha tomado o vínculo fica sem servidor: inative-o na tela *Usuário* ou ligue-o a um servidor próprio.
 
 **Compilação a partir do código-fonte**
 - Ordem: `aghu-entidades` e depois `aghu`, com `mvn clean install -P '!PMD,gitinfo' -Dmaven.test.skip=true -Dpmd.skip=true`.
@@ -567,7 +753,18 @@ O modo `producao` aplica estas verificações:
 
 ## Licenças
 
-- **AGHUse:** © Hospital de Clínicas de Porto Alegre, distribuído sob a Licença Pública Geral GNU (GPL), versão 2 ou posterior. Contato da comunidade: centralAGHUse@hcpa.edu.br.
+O AGHUse é **software público**: feito por uma instituição pública com recursos públicos e distribuído como **software livre** (GPL v2 ou posterior). Isso garante a qualquer pessoa ou instituição as quatro liberdades da licença:
+
+| Liberdade | O que significa na prática |
+|---|---|
+| **Usar** | instalar e usar o sistema para qualquer finalidade, sem pagar licença |
+| **Estudar** | ter acesso ao código-fonte e entender como o sistema funciona |
+| **Modificar** | adaptar o sistema às suas necessidades, como fizemos na [variante integração LDAP](modificacoes/integracao-ldap/README.md) |
+| **Redistribuir** | compartilhar cópias, originais ou modificadas, mantendo a mesma licença e o código-fonte aberto |
+
+Quem redistribui uma versão modificada deve publicar o código-fonte das mudanças e manter a mesma licença. Por isso as modificações deste instalador estão documentadas e disponíveis em `modificacoes/`.
+
+- **AGHUse:** © Hospital de Clínicas de Porto Alegre, distribuído sob a Licença Pública Geral GNU (GPL), versão 2 ou posterior. Contato da comunidade: centralAGHUse@hcpa.edu.br. Página oficial: [https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse](https://sites.google.com/hcpa.edu.br/aghuse/sobre-o-aghuse).
 - **OpenJDK:** GPL v2 com Classpath Exception.
 - **WildFly:** Apache License 2.0 / LGPL.
 - **PostgreSQL:** PostgreSQL License.

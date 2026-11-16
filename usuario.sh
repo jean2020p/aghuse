@@ -35,8 +35,8 @@ fi
 
 gerar_senha() {
   local s=""
-  while [ "${#s}" -lt 16 ]; do s="$s$(head -c 48 /dev/urandom | base64 -w0 | tr -dc 'A-Za-z0-9')"; done
-  printf '%s' "${s:0:16}"
+  while [ "${#s}" -lt 12 ]; do s="$s$(head -c 48 /dev/urandom | base64 -w0 | tr -dc 'A-Za-z0-9')"; done
+  printf '%s' "${s:0:12}"
 }
 ler_senha() {  # define SENHA
   local s1 s2
@@ -51,7 +51,7 @@ ler_senha() {  # define SENHA
   fi
   if [ -z "$s1" ]; then SENHA="$(gerar_senha)"; SENHA_GERADA=1
   else
-    [ "${#s1}" -ge 10 ] || erro "a senha deve ter no minimo 10 caracteres."
+    [ "${#s1}" -ge 8 ] || erro "a senha deve ter no minimo 8 caracteres."
     SENHA="$s1"; SENHA_GERADA=0
   fi
 }
@@ -72,6 +72,7 @@ proximos_passos() {
     3. Servidor: Reg. Colaboradores > Administracao de Pessoal > Administrar Servidores > Servidores
                  (pessoa, login "$LOGIN", vinculo, matricula e inicio do vinculo)
   O login so e aceito apos as tres etapas.
+  Passo a passo completo: docs/CADASTRO_DE_USUARIOS.md
 EOF
 }
 

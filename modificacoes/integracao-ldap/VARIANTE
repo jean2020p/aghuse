@@ -1,0 +1,9 @@
+# Identifica um pacote "variante" do instalador AGHUse: modificacao NAO OFICIAL do codigo-fonte,
+# sem vinculo com a Comunidade AGHUse. Documentacao: modificacoes/integracao-ldap/README.md
+NOME="integracao-ldap"
+VERSAO="1"
+DESCRICAO="Variante nao oficial: integracao LDAP (v1)"
+BASE="AGHUse 13.250-STABLE (codigo-fonte do pacote aghuse_28052025.zip, commit 846373ff)"
+COMMIT_APLICACAO="f6e3a154"
+SHA256_AGHU_EAR="41f4982fa998312aed95f216d9413cb744c3c1566e9675344be98db6d26ba79d"
+DOCUMENTACAO="modificacoes/integracao-ldap/README.md"

@@ -63,7 +63,9 @@ if modo == "banco":
     if alvo not in x:
         sys.exit("ERRO: bloco do realm nao encontrado no standalone-full.xml")
     x = x.replace(alvo, alvo + '                        <property name="loginDatasource" value="java:/aghuLoginDatasource"/>\n', 1)
-    ds = """                <datasource jndi-name="java:/aghuLoginDatasource" pool-name="aghulogin" enabled="true" use-java-context="true">
+    # jta="false": a conferencia de senha (tela Senha) roda dentro de uma transacao; um datasource
+    # transacional seria recusado ("multiple last resources") e a senha atual nunca conferiria
+    ds = """                <datasource jndi-name="java:/aghuLoginDatasource" pool-name="aghulogin" enabled="true" use-java-context="true" jta="false">
                     <connection-url>jdbc:postgresql://127.0.0.1:%s/%s</connection-url>
                     <driver>PostgresqlDriver</driver>
                     <pool>

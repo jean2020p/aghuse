@@ -1,0 +1,30 @@
+# --- Gerados pelo instalador na maquina de quem instala (nao versionar) ---
+# copias de seguranca do aghuse.conf feitas pelo instalar-assistente.sh (podem conter senhas)
+aghuse.conf.anterior-*
+*.conf.tmp
+# arquivos grandes remontados a partir das partes (*.parte-NNN) pelo instalador
+/pacote/aghu.ear
+/pacote/dbaghu.dmp
+/dependencias/java/openjdk-17.0.2_linux-x64_bin.tar.gz
+/dependencias/wildfly/wildfly-26.1.3.Final.zip
+*.tmp
+
+# --- Geracao do instalador grafico do Windows (windows/setup/gerar-setup.ps1) ---
+/windows/setup/build/
+/windows/setup/cache/
+/windows/setup/saida/
+
+# --- Credenciais, logs e arquivos de ambiente: nunca versionar ---
+aghuse-credenciais-*.txt
+*.senha
+*.log
+.env
+.env.*
+
+# --- Editores, ferramentas e sistema ---
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+Desktop.ini
+.DS_Store

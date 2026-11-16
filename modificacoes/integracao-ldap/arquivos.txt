@@ -1,0 +1,10 @@
+A	aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenha.java
+A	aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/ServicoSenhaBanco.java
+M	aghu/aghu-casca/src/main/java/br/gov/mec/aghu/casca/business/UsuarioON.java
+A	aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaLdapRealTest.java
+A	aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoDiretorioSenhaTest.java
+A	aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/ServicoSenhaBancoTest.java
+A	aghu/aghu-casca/src/test/java/br/gov/mec/aghu/casca/business/UsuarioONAlterarSenhaTest.java
+M	aghu/aghu-web/src/main/resources/bundle/aghu/casca/messages_casca.properties
+M	aghu/aghu-web/src/main/webapp/WEB-INF/templates/casca_template.xhtml
+M	aghu/aghu-web/src/main/webapp/pages/casca/senha/trocarSenha.xhtml

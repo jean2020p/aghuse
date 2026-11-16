@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<!--
+AGHUse - Aplicativo de Gestao Hospitalar
+
+Direitos Autorais Reservados (c) 2016, Hospital de Clinicas de Porto Alegre
+
+Este programa e software livre; voce pode redistribui-lo e/ou modifica-lo sob os termos de 
+Licenca Publica Geral GNU conforme publicada pela Free Software Foundation; tanto a versao
+2 da Licenca, como (a seu criterio) qualquer versao posterior.
+
+Este programa e distribuido na expectativa de que seja util, porem, SEM NENHUMA GARANTIA;
+nem mesmo a garantia implicita de COMERCIABILIDADE OU ADEQUACAO A UMA FINALIDADE ESPECIFICA.
+Consulte a Licenca Publica Geral do GNU para mais detalhes.
+
+Voce deve ter recebido uma copia da Licenca Publica Geral do GNU junto com este programa; 
+se nao, escreva para a Free Software Foundation, Ind., no endereco 59 Temple Street, Suite
+330, Boston, MA 02111-137 USA.
+
+Hospital de Clinicas de Porto Alegre. Rua Ramiro Barcelos, 2350 - 2Andar CGTI - Bairro Santa Cecilia, Porto Alegre - RS, 90.035-903. E-mail: centralAGHUse@hcpa.edu.br
+-->
+
+<html xmlns="http://www.w3.org/1999/xhtml" 
+	xmlns:ui="http://xmlns.jcp.org/jsf/facelets"
+	xmlns:f="http://xmlns.jcp.org/jsf/core" 
+	xmlns:h="http://xmlns.jcp.org/jsf/html" 
+	xmlns:c="http://xmlns.jcp.org/jsp/jstl/core"
+	xmlns:fn="http://xmlns.jcp.org/jsp/jstl/functions"
+	xmlns:p="http://primefaces.org/ui"
+	xmlns:mec="http://xmlns.jcp.org/jsf/composite/components"
+	xmlns:pe="http://primefaces.org/ui/extensions"
+	xmlns:aghu="http://xmlns.jcp.org/jsf/component">
+
+	<f:view>
+    
+	    <h:head>  
+	        <meta name="viewport" content="width=device-width"/>
+	        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+	        <link rel="shortcut icon" href="#{request.contextPath}/favicon.ico;aghuse"></link>
+
+			<ui:insert name="head" />
+			
+			<link type="text/css" rel="stylesheet" href="/aghu/javax.faces.resource/casca_template.css.xhtml?ln=css-default&amp;v=#{jsVersionManager.jsVersion}" />
+			
+			<style>
+				<ui:insert name="style" />
+			</style>
+			
+		 <f:facet name="last">			
+	            <h:outputScript name="jquery.easyui.min.js"  library="plugin" />                        											
+				<h:outputScript name="aghu-menu.min.js?#{jsVersionManager.jsVersion}"  library="plugin"  />
+				<h:outputScript name="jquery.countdown.min.js?#{jsVersionManager.jsVersion}"  library="plugin" />			
+				<h:outputScript name="core-casca.min.js?#{jsVersionManager.jsVersion}"  library="js"  />
+	       </f:facet>
+		</h:head>
+
+	    <h:body>
+			<p:ajaxStatus id="basicStatus" oncomplete="timer.startCounterSession(#{session.maxInactiveInterval}, true);menu.executeDialogMsg(PF('messageCascaDialogWG'));" />    
+	    
+			<h:form prependId="false">
+				<h:inputHidden id="contextPath" value="#{request.contextPath}" immediate="true"/>
+			</h:form>				     	
+
+			<p:cache id="bemVindoCache" region="#{request.remoteUser}_bemvindocache">
+				<p:notificationBar position="bottom" effect="slide" styleClass="notificationBemVindo" widgetVar="bemvindoWG">
+					<h:outputText value="Seja Bem Vindo #{fn:toLowerCase((menuController.servidor != null ? (menuController.servidor.pessoaFisica.nomeSocial != null ? menuController.servidor.pessoaFisica.nomeSocial : menuController.servidor.pessoaFisica.nome) : menuController.usuario.nome))}!" style="font-size:22px;text-transform:capitalize;" /><br/><br/>
+					<h:outputText value="Último Acesso:" style="font-size:15px;" />
+					<h:outputText value="#{menuController.dataUltimoAcesso}" style="font-size:15px;margin: 0 5px;">
+						<f:convertDateTime pattern="dd/MM/yyyy HH:mm:ss" />
+					</h:outputText>
+					<h:outputText value="Tempo de sessão: #{menuController.usuario.tempoSessaoMinutos} minutos." style="font-size:15px;margin: 0 8px;" /><br/><br/>
+					<span style="font-size:12px;">
+						Versão: #{messages.project_version != '' and messages.project_version != '???project_version???' ? messages.project_version : messages.PREFIXO_VERSAO_AGHU}.#{messages.git_commit_id_abbrev != null 
+	         													and messages.git_commit_id_abbrev != '' 
+												         		and messages.git_commit_id_abbrev != 'HEAD'
+											                    and messages.git_commit_id_abbrev != 'git_commit_id_abbrev' ? messages.git_commit_id_abbrev : messages.git_commit_id_abbrev} atualizada em #{messages.now != null
+	         													and messages.now != ''
+	         													and messages.now != 'now' ? messages.now : messages.git_commit_time}
+	         		</span>											
+				</p:notificationBar>		    	
+			</p:cache>	
+
+	    	<div id="area-principal" class="area-principal">
+	    	
+		    	<header id="casca-menu" class="casca-menu" onclick="amazonmenu.close('cascamenuprincipal');" >
+    				<div class="casca-menu-topbar"></div>
+					
+					<h:form id="casca_menu_form" prependId="false">
+						<pe:remoteCommand name="adicionarFavorito" action="#{menuController.addFavorito}" update="@(div.casca-home-center)" process="@this">
+							<pe:assignableParam name="param1" assignTo="#{menuController.menuFavoritoId}"/>
+						</pe:remoteCommand>
+						
+						<pe:remoteCommand name="removerFavorito" action="#{menuController.removeFavorito}" update="@(div.casca-home-center)" process="@this">      	
+							<pe:assignableParam name="param1" assignTo="#{menuController.menuFavoritoId}"/>
+						</pe:remoteCommand>
+						
+						<pe:remoteCommand name="addPOLProntuario" onstart="pol.openExpanded=false;" global="false" 
+							action="#{arvorePOLController.addPOLPaciente}" process="@this" update="@this">
+							<pe:assignableParam name="param1" assignTo="#{arvorePOLController.prontuario}"/>
+							<pe:assignableParam name="param2" assignTo="#{arvorePOLController.chamadaForaPOL}"/>							  
+						</pe:remoteCommand>
+					
+						<pe:remoteCommand name="addExpandedPOLProntuario" onstart="pol.openExpanded=true;" 
+							action="#{arvorePOLController.addPOLPaciente}" process="@this" global="false" update="@this">
+							<pe:assignableParam name="param1" assignTo="#{arvorePOLController.prontuario}"/>
+							<pe:assignableParam name="param2" assignTo="#{arvorePOLController.descricaoExpandedNode}"/>
+							<pe:assignableParam name="param3" assignTo="#{arvorePOLController.chamadaForaPOL}"/>							 
+						</pe:remoteCommand>
+						
+						<pe:remoteCommand name="togglePol" onstart="PF('layoutPOLWG').close('west'); return false;" />
+												
+						<pe:remoteCommand name="gravarUrl" process="@this">
+							<pe:assignableParam name="param1" assignTo="#{arvorePOLController.lastIframeUrl}"/>
+						</pe:remoteCommand>
+						
+						<pe:remoteCommand name="closePOL" action="#{arvorePOLController.limparTudo}" oncomplete="pol.openExpanded=false;" process="@this"  />
+						
+						<pe:remoteCommand name="logoutOnUnload" action="#{loginController.logoutByUnload()}" process="@this" immediate="true"/>
+    				    
+    				    <pe:remoteCommand name="sendErrorLog" actionListener="#{logController.logError}" process="@this"  >
+    				    	<pe:methodSignature parameters="java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String" />  
+    						<pe:methodParam name="source"/>
+    						<pe:methodParam name="errorMessage"/>
+    						<pe:methodParam name="url"/>
+    						<pe:methodParam name="lineNumber"/>
+    						<pe:methodParam name="columnNumber"/>
+    						<pe:methodParam name="error"/>    						
+    						<pe:methodParam name="fingerprint"/>
+    						<pe:methodParam name="navigator"/>
+    				    </pe:remoteCommand>
+    				    
+    				    <pe:remoteCommand name="sendDebugLog" actionListener="#{logController.logDebug}" process="@this"  >
+    				    	<pe:methodSignature parameters="java.lang.String" />  
+    						<pe:methodParam name="message"/>    						    					
+    				    </pe:remoteCommand>
+    				    
+    				    <pe:remoteCommand name="atualizarExecucaoLogout" actionListener="#{bloqueioLoginController.atualizarExecucaoLogout}" process="@this" update="@(#modalLogoutAcessoSimultaneo)" oncomplete="PF('modalLogoutAcessoSimultaneoWG').show();">
+    				    	<pe:methodSignature parameters="java.lang.String, java.lang.String" />
+    				    	<pe:methodParam name="idSessao"/>
+    						<pe:methodParam name="hostClientOrigem"/>
+    				    </pe:remoteCommand>
+   				    
+    				    				
+		    			<ui:insert name="menu_esquerda" />
+			    			
+			    		<div class="casca-menu-center">
+			    			<span class="area-logo">
+			    			   <h:graphicImage name="logo-aghuse.png" library="img" />			    				
+			    			</span>
+			    		</div>
+			    		
+			    	</h:form>	
+	    			
+		    		<h:form id="casca_search_form" prependId="false">
+		    			<ui:insert name="menu_direita" />
+		    		</h:form>	
+		    	</header>
+		    	
+		    	<div id="casca-conteudo" class="casca-conteudo">
+					<p:dialog id="msgCascaDialog" widgetVar="messageCascaDialogWG"
+						header="Mensagens do Sistema"
+						styleClass="aghu-messages-dialog"
+						visible="#{not empty facesContext.messageList}" resizable="false"
+						maximizable="false" position="right,top" style="z-index:10000"
+						onHide="menu.clearDialogMsg(PF('messageCascaDialogWG'));">
+						<p:autoUpdate />
+						<p:messages id="messagesInDialog" widgetVar="messageCascaDialogMessageWG" styleClass="aghu-messages">
+						</p:messages>
+					</p:dialog>
+	
+					<ui:insert name="conteudo" />
+		    	</div>
+				
+				<p:cache id="formDocCache" region="#{request.remoteUser}_formdoccache">
+					<h:form id="formDocDialog" prependId="false">
+						<p:dialog id="msgDocsDialog" widgetVar="documentacaoWG" appendTo="@(body)" closable="true" showEffect="fade" closeOnEscape="true"
+							visible="#{not empty facesContext.messageList}" resizable="true" maximizable="false" style="z-index:10000" draggable="false" modal="false" 
+							width="600" height="400">
+							
+						    <p:accordionPanel prependId="false" styleClass="casca-home-accordion" activeIndex="0">
+							    <p:tab title="Manuais de Uso" >
+									<ul class="casca-home-accordion-ul">
+									
+										<li><a href="#" class="casca-home-accordion-link"
+											onclick="PF('toolsPanelWG').hide();abrirNovaJanela('https://drive.google.com/drive/folders/1AYRtUO0LUxE_tgtpeu8qSpUCBRCl_CiT?usp=sharing');return false;">
+											Clique aqui para acessar os documentos no Google Drive</a></li>
+											<li>
+											</li>
+								
+										<p:outputPanel  rendered="#{menuController.carregalinksExternos()}">
+											<li><a href="#" class="casca-home-accordion-link" 
+											onclick="PF('toolsPanelWG').hide();abrirNovaJanela('#{menuController.linkManuaisExterno}');return false;">
+											Manuais Externo</a></li>
+										</p:outputPanel>
+									</ul>
+								</p:tab>
+							  </p:accordionPanel>					
+							
+						</p:dialog>				
+					</h:form>
+				</p:cache>
+					
+		    	<footer id="casca-rodape" class="casca-rodape">
+    				<div class="casca-rodape-left">
+		    			<ui:insert name="rodapeEsquerdo" />
+		    		</div>
+		    		<div class="casca-rodape-center">
+		    			<ui:insert name="rodapeCentro" />
+		    		</div>
+		    		<div class="casca-rodape-right">
+		    			<ui:insert name="rodapeDireito" />
+		    		</div>			     	
+			     	
+		    	</footer>
+			</div>
+
+			<h:form id="formLoading" prependId="false">
+				<p:dialog id="form_loading" header="Carregando" widgetVar="loadDialogWG" minHeight="160" closable="false" resizable="false" modal="true" draggable="false">
+		    		<div style="margin:2px 6px 10px;color:gray">Aguarde...</div>
+		        	<p:graphicImage library="img" name="/components/ajaxloadingbar.gif" style="float:left;"/>
+				</p:dialog>	
+			</h:form>
+						
+			<h:form id="formCascaProcessing" prependId="false">
+				<p:dialog id="casca_processing" header="Processando" widgetVar="waitDialogCasca" minHeight="110" closable="false" resizable="false" draggable="false">
+		    		<div style="margin:2px 6px 10px;color:gray">Aguarde...</div>
+		        	<p:graphicImage library="img" name="/components/ajaxloadingbar.gif" style="float:left;"/>
+				</p:dialog>
+			</h:form>
+			
+			<h:form id="formEndSession" prependId="false">
+		    	<p:confirmDialog id="casca_endsession" widgetVar="cascaEndSessionWG" showEffect="bounce" closable="false" width="350" height="80" resizable="false"
+		    		message="Sua sessão expirou por inatividade.">
+			        <h:commandButton value="Restaurar" action="#{loginController.logoutAndRedirectExpired}" onclick="session.desativaSessionOnUnload();" 
+			        	style="margin: 10px" icon="ui-icon-check" styleClass="ui-confirmdialog-yes" />
+		    	</p:confirmDialog>			
+           </h:form>
+           
+           <h:form id="formRenovaSession" prependId="false">
+		    	<p:confirmDialog id="casca_renovasession" widgetVar="cascaRenovaSessionWG" showEffect="bounce" closable="false" width="350" height="80" resizable="false"
+		    	message="Sua sessão expirará em breve.">
+			        <p:commandButton value="Renovar" target="_blank" action="#{loginController.renovarSessao}" ajax="true"
+			        	style="margin: 10px" icon="ui-icon-check" styleClass="ui-confirmdialog-yes" />
+		    	</p:confirmDialog>			    		
+           </h:form>
+           
+           
+	           
+			<script>
+		    	jQuery(document).ready(function() {
+		    		menu.start();
+		    	 	amazonmenu.init({menuid: 'cascamenuprincipal'});
+		    		tab.start();
+		    		timer.startCounterSession(#{session.maxInactiveInterval}, false);
+		    		PrimeFaces.widgetNotAvailable = function(c) {
+		    			sendErrorLog(window.location, 'Widget for var ' + c + ' not available!', '', 0, 0, '', '', navigator.userAgent);
+		    			console.error('Widget for var ' + c + ' not available!');
+		    		}
+		    		fixDialogMaximize(PF('centralpendenciasWG'));		    		
+					if (#{pendenciaController.mostraPendencias}){
+						PF('centralpendenciasWG').show();
+					}
+					PF('bemvindoWG').show();
+					setTimeout(function(){PF('bemvindoWG').hide()}, 5000);
+					try {
+						timer.startClock();
+					} catch(e){
+						console.log('Error starting clock: ' + e);
+					} // segue normalmente
+
+					// mangle back button
+				    history.pushState(null, null, window.location.href);
+				    window.addEventListener('popstate', function(event) {
+				    	history.pushState(null, null, window.location.href);
+				    });
+				    /* FIX bug primefaces 6.2
+				    // https://stackoverflow.com/questions/50443642/primefaces-autocomplete-close-after-click-on-scroll-bar/50527971#50527971
+				    // https://github.com/primefaces/primefaces/issues/3431
+				    */
+				    $('body').on('mousedown', '.ui-autocomplete-panel', function(event) { event.stopImmediatePropagation();});
+				    
+				    // readmore do menu ferramentas
+				    $('article').readmore({speed: 100});				    
+				    $('#scrollar').css('overflow-y', 'hidden').scrollTop(0);
+				    
+				    store.store_priceFormat = $.fn.priceFormat;
+				    store.store_calculator = $.fn.calculator;
+				    store.store_countdown = $.fn.countdown;
+				    store.store_timer = top.timer;
+				    store.focus_after_submit = null;
+				    
+				    window.onerror = function (msg, url, lineNo, columnNo, error) {			    		 
+			    		var fingerprint = jQuery('#casca-rodape').html(); 
+				    	sendErrorLog('casca_template', msg, url, lineNo, columnNo, error, fingerprint, navigator.userAgent);
+			    		return false;
+			    	}
+				    
+				    integracao.onExternalMessage("CLOSE_CURRENT_TAB"		, integracao.closeCurrentTab);
+				    integracao.onExternalMessage("SHOW_MESSAGE_ON_DIALOG"	, integracao.showMessageOnDialog);
+		    	});
+		    	
+		    	function timeoutSession(){
+			    	top.PrimeFaces.widgets.cascaEndSessionWG.show();
+			    }
+		    	function renovarSession(){
+		    		top.PrimeFaces.widgets.cascaRenovaSessionWG.show();
+			    }
+		    	
+		    	if (#{cascaController.ativaLogoutOnUnload}){
+		    		window.onbeforeunload = function(e) {
+		    			session.closeSessionOnUnload();
+		    		}
+		    	}
+
+		    	function enterOnblur(evt, element){
+		    		var k=evt.keyCode||evt.which;
+		    		
+		    		if (k == 13){ // Tecla 'ENTER'
+		    			jQuery(element).blur();
+		    			return false;
+		    		}
+		    		
+		    		return true;
+		    	}
+			</script>
+			
+    	</h:body>
+    </f:view>
+	 
+</html>

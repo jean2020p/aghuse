@@ -1,0 +1,15 @@
+@echo off
+rem AGHUse - executa instalar.ps1 como Administrador
+setlocal
+net session >nul 2>&1
+if not errorlevel 1 goto ADMIN
+if not "%~1"=="" goto PRECISA_ADMIN
+echo Solicitando permissao de administrador...
+powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File \"%~dp0instalar.ps1\"'"
+exit /b
+:PRECISA_ADMIN
+echo Execute este comando em um Prompt de Comando aberto como Administrador.
+exit /b 1
+:ADMIN
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0instalar.ps1" %*
+exit /b %ERRORLEVEL%

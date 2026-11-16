@@ -23,6 +23,6 @@ PAG="$(curl -fsS --max-time 60 "http://127.0.0.1:$PORTA_HTTP/aghu/pages/casca/ca
 chk "Tela de login respondendo na porta $PORTA_HTTP" "grep -q formLogin <<< \"\$PAG\""
 V="$(grep -o 'Vers[^<]*' <<< "$PAG" | sed -n '1{s/[[:space:]]\+/ /g;p}')"
 [ -n "$V" ] && echo "  $V"
-N=$(grep -c ' ERROR ' "$WFD/standalone/log/server.log" 2>/dev/null || echo 0)
+N=$(grep -c ' ERROR ' "$WFD/standalone/log/server.log" 2>/dev/null); N=${N:-0}
 echo "  Linhas de ERROR no server.log atual: $N"
 exit $ST
